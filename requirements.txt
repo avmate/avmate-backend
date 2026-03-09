@@ -1,6 +1,11 @@
 fastapi
 uvicorn[standard]
-sentence-transformers
-torch
 pydantic
+chromadb
+sentence-transformers
+anthropic
+pdfplumber
+pytesseract
+pdf2image
+requests
 numpy
