@@ -1,0 +1,13 @@
+# Environment / secrets
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# ChromaDB — too large for GitHub, built at startup
+chroma_db/
+
+# Temp files from indexer
+temp_*.pdf

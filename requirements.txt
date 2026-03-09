@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+pydantic
+pdfplumber
+chromadb
+sentence-transformers
+anthropic
+pytesseract
+pdf2image
+requests
