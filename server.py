@@ -49,6 +49,10 @@ anthropic_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 def health():
     return {"status": "ok", "collection_count": collection.count()}
 
+@app.get("/health")
+def health():
+    return {"status": "ok", "collection_count": collection.count()}
+
 @app.post("/search")
 def search(q: Query):
     if model is None:
