@@ -2,10 +2,10 @@ fastapi
 uvicorn[standard]
 pydantic
 chromadb
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
 sentence-transformers
 anthropic
 pdfplumber
-pytesseract
-pdf2image
 requests
 numpy
