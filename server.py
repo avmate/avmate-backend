@@ -1,18 +1,17 @@
-
-# AvMate V2 backend with Vector Search
-# Run with: uvicorn server:app --reload
+# AvMate V2 Backend
+# Run: uvicorn server:app --reload
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import chromadb
-from sentence_transformers import SentenceTransformer
 import anthropic
+import threading
 import os
 import random
 import json
 
-app = FastAPI()
+app = FastAPI(title="AvMate API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,54 +23,76 @@ app.add_middleware(
 class Query(BaseModel):
     query: str
 
-# Initialize Chroma client
+# --- ChromaDB ---
 try:
-    client = chromadb.PersistentClient(path="./chroma_db")
-    collection = client.get_or_create_collection(name="avmate_regulations")
-    print(f"Collection count: {collection.count()}")
+    db_client = chromadb.PersistentClient(path="./chroma_db")
+    collection = db_client.get_or_create_collection(name="avmate_regulations")
+    print(f"ChromaDB ready. Collection count: {collection.count()}")
 except Exception as e:
-    print(f"ChromaDB init error: {e}")
-    client = chromadb.EphemeralClient()
-    collection = client.get_or_create_collection(name="avmate_regulations")
+    print(f"ChromaDB error: {e} — using in-memory fallback")
+    db_client = chromadb.EphemeralClient()
+    collection = db_client.get_or_create_collection(name="avmate_regulations")
 
-# Initialize embedding model
-try:
-    model = SentenceTransformer('all-MiniLM-L6-v2')
-    print("Embedding model loaded.")
-except Exception as e:
-    print(f"Model load error: {e}")
-    model = None
+# --- Embedding model (lazy load in background) ---
+_model = None
+_model_ready = False
 
-# Initialize Claude client
+def _load_model():
+    global _model, _model_ready
+    try:
+        from sentence_transformers import SentenceTransformer
+        _model = SentenceTransformer("all-MiniLM-L6-v2")
+        _model_ready = True
+        print("Embedding model loaded.")
+    except Exception as e:
+        print(f"Embedding model failed to load: {e}")
+
+threading.Thread(target=_load_model, daemon=True).start()
+
+# --- Anthropic client ---
 anthropic_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+# --- Routes ---
 
 @app.get("/")
 def root():
-    return {"service": "AvMate API", "version": "2.2", "health": "/health", "search": "/search"}
+    return {
+        "service": "AvMate API",
+        "version": "2.3",
+        "model_ready": _model_ready,
+        "collection_count": collection.count()
+    }
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "collection_count": collection.count()}
+    return {
+        "status": "ok",
+        "model_ready": _model_ready,
+        "collection_count": collection.count()
+    }
 
 @app.post("/search")
 def search(q: Query):
-    if model is None:
-        return {"error": "Embedding model failed to load."}
+    if not _model_ready:
+        return {
+            "answer": "AvMate is warming up — embedding model is loading. Please try again in 30 seconds.",
+            "plain_english": "Server is starting up.",
+            "example": "",
+            "study": "",
+            "sources": "",
+            "confidence": 0
+        }
 
-    query_embedding = model.encode([q.query]).tolist()
+    query_embedding = _model.encode([q.query]).tolist()
 
-    results = collection.query(
-        query_embeddings=query_embedding,
-        n_results=10
-    )
-
-    documents = results['documents'][0] if results['documents'] else []
-    metadatas = results['metadatas'][0] if results['metadatas'] else []
+    results = collection.query(query_embeddings=query_embedding, n_results=10)
+    documents = results["documents"][0] if results["documents"] else []
+    metadatas = results["metadatas"][0] if results["metadatas"] else []
 
     if not documents:
         return {
             "answer": "No relevant regulations found. The database may still be indexing.",
-            "plain_english": "Try again shortly.",
+            "plain_english": "Try again in a few minutes.",
             "example": "",
             "study": "",
             "sources": "",
@@ -79,25 +100,16 @@ def search(q: Query):
         }
 
     retrieved_text = "\n\n".join(documents)
-    sources = list(set([meta['source'] for meta in metadatas]))
+    sources = list(set([m["source"] for m in metadatas]))
 
-    prompt = f"""
-You are AvMate, an AI assistant for Australian aviation regulations.
+    prompt = f"""You are AvMate, an AI assistant for Australian aviation regulations.
 
 User query: {q.query}
 
 Retrieved regulation text:
 {retrieved_text}
 
-Based on the above, provide:
-- answer: A concise answer to the query.
-- plain_english: Explain in simple terms.
-- example: A practical example.
-- study: Study questions related to the topic.
-- sources: List the regulation sources used.
-
-Format as JSON with keys: answer, plain_english, example, study, sources.
-"""
+Provide a JSON response with keys: answer, plain_english, example, study, sources."""
 
     try:
         response = anthropic_client.messages.create(
@@ -105,9 +117,8 @@ Format as JSON with keys: answer, plain_english, example, study, sources.
             max_tokens=1000,
             messages=[{"role": "user", "content": prompt}]
         )
-        content = response.content[0].text
-        result = json.loads(content)
-        result['confidence'] = random.randint(90, 99)
+        result = json.loads(response.content[0].text)
+        result["confidence"] = random.randint(90, 99)
         return result
     except Exception as e:
         print(f"Claude error: {e}")
@@ -115,7 +126,7 @@ Format as JSON with keys: answer, plain_english, example, study, sources.
             "answer": f"Based on regulations: {retrieved_text[:500]}...",
             "plain_english": "Relevant excerpts from aviation regulations.",
             "example": documents[0] if documents else "",
-            "study": "Review the full regulation documents for detailed study.",
+            "study": "Review the full regulation documents.",
             "sources": "\n".join(sources),
             "confidence": random.randint(90, 99)
         }
