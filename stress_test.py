@@ -39,9 +39,20 @@ def test_health():
             if count == 0:
                 print(f"  {INFO} WARNING: collection_count=0 — indexer may not have run")
         else:
-            log(FAIL, "Health endpoint", f"status={r.status_code} body={r.text[:100]}")
+            log(FAIL, "Health endpoint", f"status={r.status_code} — redeploy Railway to get latest code")
     except Exception as e:
         log(FAIL, "Health endpoint", str(e))
+
+def test_docs():
+    """FastAPI /docs should be reachable."""
+    try:
+        r = requests.get(f"{BASE_URL}/docs", timeout=10)
+        if r.status_code == 200:
+            log(PASS, "Swagger /docs reachable")
+        else:
+            log(FAIL, "Swagger /docs", f"status={r.status_code}")
+    except Exception as e:
+        log(FAIL, "Swagger /docs", str(e))
 
 def test_search_normal():
     """Normal aviation query."""
@@ -155,6 +166,7 @@ def main():
     print(f"{'='*50}\n")
 
     test_health()
+    test_docs()
     test_missing_field()
     test_search_empty()
     test_search_injection()
