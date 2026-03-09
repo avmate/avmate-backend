@@ -45,6 +45,10 @@ except Exception as e:
 # Initialize Claude client
 anthropic_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
+@app.get("/")
+def root():
+    return {"service": "AvMate API", "version": "2.1", "health": "/health", "search": "/search"}
+
 @app.get("/health")
 def health():
     return {"status": "ok", "collection_count": collection.count()}
