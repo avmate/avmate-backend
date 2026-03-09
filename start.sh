@@ -3,9 +3,9 @@ set -e
 
 echo "=== AvMate Startup ==="
 
-# Check if DB already has data
+# Check collection count
 COUNT=$(python -c "
-import chromadb, sys
+import chromadb
 try:
     c = chromadb.PersistentClient(path='./chroma_db')
     col = c.get_or_create_collection('avmate_regulations')
@@ -17,11 +17,11 @@ except:
 echo "Current collection count: $COUNT"
 
 if [ "$COUNT" -eq "0" ]; then
-    echo "Database empty — running indexer..."
-    python index_new.py
-    echo "Indexing complete."
+    echo "Database empty — starting indexer in background..."
+    python index_new.py &
+    echo "Indexer running in background. Server starting now."
 else
-    echo "Database already populated — skipping indexer."
+    echo "Database populated — skipping indexer."
 fi
 
 echo "Starting server..."
