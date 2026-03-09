@@ -1,26 +1,24 @@
 FROM python:3.11-slim
 
-# Install OCR tools
-RUN apt-get update && apt-get install -y \
-    poppler-utils \
-    tesseract-ocr \
-    && rm -rf /var/lib/apt/lists/*
-
-# Set workdir
 WORKDIR /app
 
-# Copy requirements
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first (allows caching)
 COPY requirements.txt .
+
+# Install Python packages
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy code
+# Pre-download the embedding model so runtime startup is fast
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
+
+# Copy application files
 COPY . .
 
-# Run indexer
-RUN python index_new.py
-
-# Expose port
-EXPOSE 8000
-
-# Start server
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Start API
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8080"]

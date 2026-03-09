@@ -1,10 +1,6 @@
 fastapi
-uvicorn
-pydantic
-pdfplumber
-chromadb
+uvicorn[standard]
 sentence-transformers
-anthropic
-pytesseract
-pdf2image
-requests
+torch
+pydantic
+numpy
