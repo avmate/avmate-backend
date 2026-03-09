@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+pydantic
+pdfplumber
+chromadb
+sentence-transformers
+anthropic
+requests
