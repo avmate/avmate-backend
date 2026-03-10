@@ -85,6 +85,13 @@ def search(
             status_code=503,
             detail="Regulation index is empty. Run the indexing command before using search.",
         )
+    embeddings = get_embedding_service()
+    if not embeddings.is_loaded:
+        embeddings.ensure_loading()
+        detail = "Embedding model is warming up. Retry the search in a few seconds."
+        if embeddings.load_error:
+            detail = f"Embedding model failed to load: {embeddings.load_error}"
+        raise HTTPException(status_code=503, detail=detail)
     try:
         return search_service.search(query, payload.top_k)
     except Exception as exc:
