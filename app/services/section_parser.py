@@ -78,12 +78,37 @@ def derive_precise_citation(section_text: str, fallback: str) -> str:
 
 
 def derive_precise_title(section_text: str, citation: str) -> str:
-    first_line = next((line.strip() for line in section_text.splitlines() if line.strip()), citation)
-    first_line = re.sub(r"\s+", " ", first_line)
+    lines = [line.strip() for line in section_text.splitlines() if line.strip()]
+    if not lines:
+        return citation
+
+    first_line = re.sub(r"\s+", " ", lines[0])
     if first_line.lower().startswith(citation.lower()):
         remainder = first_line[len(citation) :].strip(" .:-")
         if remainder:
             return f"{citation} {remainder}"[:160]
+        return citation[:160]
+
+    # Common AIP shape:
+    # line 1 -> "AIP Australia"
+    # line 2 -> "1.6.5 Heading text..."
+    if len(lines) > 1 and first_line.lower().startswith("aip"):
+        second_line = re.sub(r"\s+", " ", lines[1])
+        match = re.match(r"^(?P<section>\d+(?:\.\d+)+)\s*(?P<heading>.*)$", second_line)
+        if match:
+            heading = match.group("heading").strip(" .:-")
+            if heading:
+                return f"AIP {match.group('section')} {heading}"[:160]
+            return f"AIP {match.group('section')}"[:160]
+
+    # Fallback: look for "citation heading" in the first two lines combined.
+    combined = re.sub(r"\s+", " ", " ".join(lines[:2]))
+    if combined.lower().startswith(citation.lower()):
+        remainder = combined[len(citation) :].strip(" .:-")
+        if remainder:
+            return f"{citation} {remainder}"[:160]
+        return citation[:160]
+
     return first_line[:160]
 
 

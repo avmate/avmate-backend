@@ -48,7 +48,7 @@ class SearchService:
                         section_id=section_id,
                         regulation_id=canonical.get("regulation_id", citation),
                         citation=citation,
-                        title=canonical.get("title", "Untitled"),
+                        title=self._refine_title(canonical.get("title", "Untitled"), citation, canonical.get("text", document)),
                         regulation_type=canonical.get("regulation_type", "UNKNOWN"),
                         source_file=canonical.get("source_file", ""),
                         source_url=canonical.get("source_url", ""),
@@ -198,3 +198,44 @@ class SearchService:
             if len(references) >= top_k:
                 break
         return references
+
+    def _refine_title(self, title: str, citation: str, text: str) -> str:
+        normalized = " ".join((title or "").split())
+        if not normalized:
+            normalized = "Untitled"
+
+        generic_titles = {
+            "untitled",
+            "aip australia",
+            "aip",
+            "casr",
+            "car",
+            "cao",
+            "mos",
+            "caa",
+        }
+        if normalized.lower() not in generic_titles:
+            return normalized[:160]
+
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if not lines:
+            return citation
+
+        # Prefer a line that starts with the citation itself.
+        for line in lines[:6]:
+            compact = " ".join(line.split())
+            if compact.lower().startswith(citation.lower()):
+                remainder = compact[len(citation) :].strip(" .:-")
+                return (f"{citation} {remainder}" if remainder else citation)[:160]
+
+        # AIP fallback from two-line headers.
+        if len(lines) > 1 and lines[0].lower().startswith("aip"):
+            compact = " ".join(lines[1].split())
+            match = re.match(r"^(?P<section>\d+(?:\.\d+)+)\s*(?P<heading>.*)$", compact)
+            if match:
+                heading = match.group("heading").strip(" .:-")
+                if heading:
+                    return f"AIP {match.group('section')} {heading}"[:160]
+                return f"AIP {match.group('section')}"[:160]
+
+        return citation[:160]

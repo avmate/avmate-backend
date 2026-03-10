@@ -14,3 +14,6 @@ temp_*.pdf
 
 # Local virtual environment
 .venv/
+
+# Local canonical database
+avmate.db
