@@ -4,7 +4,7 @@ import html
 import io
 import re
 from dataclasses import dataclass
-from urllib.parse import quote_plus, unquote, urljoin
+from urllib.parse import unquote, urljoin
 
 import pdfplumber
 import requests
@@ -15,6 +15,7 @@ from app.services.search_service import SearchService
 
 DUCKDUCKGO_HTML_URL = "https://duckduckgo.com/html/"
 CASA_DOMAIN = "https://www.casa.gov.au"
+CASA_SEARCH_URL = "https://www.casa.gov.au/search"
 
 
 FORM_OVERRIDES: dict[str, str] = {
@@ -72,7 +73,7 @@ class StudyGuideService:
             )
 
         notes = [
-            "Criteria are extracted in the form’s visible order and mapped to indexed regulations.",
+            "Criteria are extracted in the form's visible order and mapped to indexed regulations.",
             "Regulation references with low confidence may require manual review against current CASA material.",
             "Always verify against the latest CASA form and legislation before operational use.",
         ]
@@ -95,13 +96,29 @@ class StudyGuideService:
 
         candidate_links = self._discover_casa_links(test_name)
         if not candidate_links:
-            raise ValueError("Could not locate a CASA form page for this test item.")
+            raise ValueError(
+                f"Could not locate a CASA form page for '{test_name}'. "
+                "Use the exact CASA test name or add a direct URL in FORM_OVERRIDES."
+            )
 
         best_url = candidate_links[0]
         title, download_url = self._resolve_download_link(best_url)
         return FormSource(title=title or test_name, page_url=best_url, download_url=download_url)
 
     def _discover_casa_links(self, test_name: str) -> list[str]:
+        discovered: list[str] = []
+        for finder in (self._discover_via_duckduckgo, self._discover_via_casa_site_search):
+            try:
+                for url in finder(test_name):
+                    if url not in discovered:
+                        discovered.append(url)
+            except Exception:
+                continue
+
+        scored = sorted(discovered, key=lambda url: self._link_score(url, test_name), reverse=True)
+        return scored[:8]
+
+    def _discover_via_duckduckgo(self, test_name: str) -> list[str]:
         query = f"site:casa.gov.au {test_name} flight test checklist"
         response = self._http.get(DUCKDUCKGO_HTML_URL, params={"q": query}, timeout=self._timeout)
         response.raise_for_status()
@@ -114,9 +131,28 @@ class StudyGuideService:
                 continue
             if url not in links:
                 links.append(url)
+        return links
 
-        scored = sorted(links, key=lambda url: self._link_score(url, test_name), reverse=True)
-        return scored[:5]
+    def _discover_via_casa_site_search(self, test_name: str) -> list[str]:
+        query = f"{test_name} flight test checklist"
+        response = self._http.get(CASA_SEARCH_URL, params={"keys": query}, timeout=self._timeout)
+        response.raise_for_status()
+        page_html = response.text
+
+        links: list[str] = []
+        for href in re.findall(r'href="([^"]+)"', page_html, flags=re.IGNORECASE):
+            raw = html.unescape(href.strip())
+            if not raw or raw.startswith("#") or raw.startswith("mailto:"):
+                continue
+            absolute = urljoin(CASA_DOMAIN, raw)
+            lower = absolute.lower()
+            if "casa.gov.au" not in lower:
+                continue
+            if ".pdf" not in lower and "checklist" not in lower and "flight-test" not in lower and "flight test" not in lower:
+                continue
+            if absolute not in links:
+                links.append(absolute)
+        return links
 
     def _link_score(self, url: str, test_name: str) -> float:
         label = self._normalize_label(test_name)
@@ -129,6 +165,8 @@ class StudyGuideService:
             score += 2.0
         if "flight-test" in url_lower or "flight-test-checklist" in url_lower:
             score += 2.0
+        if "resources-and-education/publications" in url_lower:
+            score += 1.5
         if url_lower.endswith(".pdf"):
             score += 1.0
         return score
@@ -151,7 +189,8 @@ class StudyGuideService:
         if not pdf_links:
             raise ValueError(f"Found CASA page but no downloadable PDF form link: {page_url}")
 
-        download_url = urljoin(page_url, html.unescape(pdf_links[0]))
+        download_candidates = [urljoin(page_url, html.unescape(link)) for link in pdf_links]
+        download_url = max(download_candidates, key=self._pdf_link_score)
         return title, download_url
 
     def _extract_form_text(self, download_url: str) -> str:
@@ -275,3 +314,16 @@ class StudyGuideService:
         slug = url.rstrip("/").split("/")[-1]
         slug = slug.replace("-", " ").replace("_", " ")
         return slug.title() or "CASA Test Form"
+
+    def _pdf_link_score(self, url: str) -> float:
+        lower = url.lower()
+        score = 0.0
+        if "checklist" in lower:
+            score += 2.0
+        if "flight-test" in lower or "flight test" in lower:
+            score += 2.0
+        if "guidance" in lower:
+            score += 1.0
+        if lower.endswith(".pdf"):
+            score += 1.0
+        return score

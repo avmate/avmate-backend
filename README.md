@@ -37,6 +37,8 @@ FastAPI backend for Australian aviation regulation search. The backend is struct
 - `/ready` returns `200` only when the service is ready to answer search requests.
 - `/search` returns a `503` if the index is empty instead of crashing the container.
 - Results are sourced from indexed regulation text and include citations, references, and study questions.
+- Numeric queries (for example circling minima by aircraft category) are re-ranked with lexical and numeric evidence checks.
+- AIP citations include page and subsection when page markers are present in the extracted text.
 - `X-Request-ID` is returned on API responses for easier tracing in logs.
 
 ## Indexing workflow
@@ -44,3 +46,20 @@ FastAPI backend for Australian aviation regulation search. The backend is struct
 The indexer downloads each PDF from R2, extracts text with `pdfplumber`, splits the text into regulation sections when possible, chunks those sections, embeds them with `sentence-transformers/all-MiniLM-L6-v2`, and upserts them into Chroma.
 
 Update `data/regulations_manifest.json` as you add new CASA source files or move to a hosted manifest in R2.
+
+If you change parsing or citation logic, rebuild the index:
+- `python indexer.py`
+
+## Quick validation
+
+1. Check readiness:
+   `Invoke-WebRequest http://127.0.0.1:8000/ready | Select-Object -Expand Content`
+2. Validate circling minima query:
+   `@'`
+   `import requests, json`
+   `resp = requests.post("http://127.0.0.1:8000/search", json={"query":"what is the circling radius for a cat C aircraft","top_k":5}, timeout=60)`
+   `print(resp.status_code)`
+   `print(json.dumps(resp.json(), indent=2)[:4000])`
+   `'@ | python -`
+3. Validate study guide source lookup:
+   `Invoke-WebRequest http://127.0.0.1:8000/study-guide -Method Post -ContentType 'application/json' -Body '{"test_name":"instrument rating - aeroplane","max_items":10}' | Select-Object -Expand Content`

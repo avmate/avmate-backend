@@ -48,9 +48,18 @@ STOP_WORDS = {
     "using",
 }
 
-PAGE_REF_PATTERN = re.compile(r"\b(?:GEN|ENR|AD|AIP)\s+\d+(?:\.\d+)?\s*-\s*\d+\b", re.IGNORECASE)
+PAGE_REF_PATTERN = re.compile(r"\b(?:GEN|ENR|AD|AIP)\s+\d+(?:\.\d+)?\s*-\s*\(?\d+\)?\b", re.IGNORECASE)
 TABLE_REF_PATTERN = re.compile(r"\bTable\s+\d+(?:\.\d+)+\b", re.IGNORECASE)
 SUBSECTION_PATTERN = re.compile(r"\b(\d+(?:\.\d+)+)\b")
+PAGE_REF_PARSE_PATTERN = re.compile(
+    r"^(?P<prefix>(?:GEN|ENR|AD|AIP)\s+\d+(?:\.\d+)?)\s*-\s*\(?(?P<page>\d+)\)?$",
+    re.IGNORECASE,
+)
+CIRCLING_ROW_PATTERN = re.compile(
+    r"\b(?P<from>\d+)\s*FT\s+(?P<to>\d+)\s*FT\s+"
+    r"(?P<a>[0-9.]+)\s*NM\s+(?P<b>[0-9.]+)\s*NM\s+(?P<c>[0-9.]+)\s*NM\s+(?P<d>[0-9.]+)\s*NM\b",
+    re.IGNORECASE,
+)
 
 
 class SearchService:
@@ -172,6 +181,12 @@ class SearchService:
         ]
         contextual_notes = self._build_contextual_notes(query, references)
         confidence = max(0, min(99, int(round(references[0].score * 100))))
+        if self._query_targets_circling_minima(query):
+            category = self._extract_aircraft_category(query)
+            if category:
+                circling = self._extract_circling_radius_data(" ".join(top_reference.text.split()), category)
+                if circling.get("radius_nm"):
+                    confidence = max(confidence, 74)
 
         return SearchResponse(
             answer=answer,
@@ -204,16 +219,40 @@ class SearchService:
             required_patterns.append(re.compile(rf"\bcat(?:egory)?\s*{cat}\b", re.IGNORECASE))
         if "circling" in query_lower:
             required_patterns.append(re.compile(r"\bcircling\b", re.IGNORECASE))
-        if "radius" in query_lower or "radii" in query_lower:
-            required_patterns.append(re.compile(r"\bradi(?:us|i)\b", re.IGNORECASE))
+        if "radius" in query_lower or "radii" in query_lower or "minima" in query_lower or "minimum" in query_lower:
+            required_patterns.append(re.compile(r"\b(?:radi(?:us|i)|minima|minimum)\b", re.IGNORECASE))
 
-        intent_tokens = [token for token in ("circling", "radius", "table", "minimum", "altitude", "fuel", "ifr", "vfr") if token in query_lower]
+        intent_tokens = [
+            token
+            for token in (
+                "circling",
+                "radius",
+                "radii",
+                "minima",
+                "minimum",
+                "table",
+                "altitude",
+                "fuel",
+                "ifr",
+                "vfr",
+            )
+            if token in query_lower
+        ]
+        numeric_intent = bool(
+            re.search(
+                r"\b(?:radius|radii|minima|minimum|nm|feet|foot|ft|kts|knots|altitude|distance)\b",
+                query_lower,
+            )
+        )
+        strict_single_reference = bool(category_match and "circling" in query_lower and numeric_intent)
         return {
             "query_lower": query_lower,
             "terms": list(dict.fromkeys(terms)),
             "phrases": list(dict.fromkeys(phrases)),
             "required_patterns": required_patterns,
             "intent_tokens": intent_tokens,
+            "numeric_intent": numeric_intent,
+            "strict_single_reference": strict_single_reference,
         }
 
     def _combine_score(
@@ -229,6 +268,7 @@ class SearchService:
         phrases = query_profile["phrases"]
         required_patterns = query_profile["required_patterns"]
         intent_tokens = query_profile["intent_tokens"]
+        numeric_intent = bool(query_profile.get("numeric_intent"))
 
         citation_lower = citation.lower()
         document_lower = document.lower()
@@ -240,11 +280,14 @@ class SearchService:
         lexical_ratio = lexical_hits / max(len(terms), 1)
         phrase_hits = sum(1 for phrase in phrases if phrase in document_lower)
         required_ok = all(pattern.search(document) or pattern.search(citation) for pattern in required_patterns)
+        numeric_evidence = bool(re.search(r"\b\d+(?:\.\d+)?\s*(?:nm|ft|m|kts|kt)\b", document_lower))
 
         passes_gate = citation_exact or citation_mentioned
         if not passes_gate:
             passes_gate = semantic_score >= 0.58 or lexical_ratio >= 0.24 or (semantic_score >= 0.5 and lexical_ratio >= 0.16)
             if required_patterns and not required_ok:
+                passes_gate = False
+            if numeric_intent and not numeric_evidence and semantic_score < 0.72:
                 passes_gate = False
 
         score = semantic_score * 0.62
@@ -264,6 +307,8 @@ class SearchService:
 
         if intent_tokens and any(token in document_lower for token in intent_tokens):
             score += 0.05
+        if numeric_intent:
+            score += 0.06 if numeric_evidence else -0.08
 
         return max(0.0, min(1.0, score)), passes_gate
 
@@ -290,17 +335,17 @@ class SearchService:
         return rescued
 
     def _build_answer(self, query: str, top_reference: ReferenceItem) -> str:
-        query_lower = query.lower()
         flattened = " ".join(top_reference.text.split())
-        category_match = re.search(r"\bcat(?:egory)?\s*([abcd])\b", query_lower)
-
-        if "circling" in query_lower and ("radius" in query_lower or "radii" in query_lower) and category_match:
-            category = category_match.group(1).upper()
-            radius_value = self._extract_circling_radius(flattened, category)
+        category = self._extract_aircraft_category(query)
+        if self._query_targets_circling_minima(query) and category:
+            circling = self._extract_circling_radius_data(flattened, category)
+            radius_value = circling.get("radius_nm")
+            elevation = circling.get("elevation_band")
             if radius_value:
+                elevation_text = elevation or "0-1000 FT aerodrome elevation"
                 return (
-                    f"For Category {category} aircraft, the circling area radius is {radius_value} at 0 ft aerodrome elevation "
-                    f"in {top_reference.citation}. Higher aerodrome elevations increase the radius."
+                    f"For Category {category} aircraft, circling radius is {radius_value} at {elevation_text} in {top_reference.citation}. "
+                    "Use higher row values for higher aerodrome elevations."
                 )
 
         sentence = self._extract_operational_sentence(flattened)
@@ -315,13 +360,39 @@ class SearchService:
         )
 
     def _build_plain_english(self, query: str, top_reference: ReferenceItem) -> str:
-        sentence = self._extract_operational_sentence(" ".join(top_reference.text.split()))
+        flattened = " ".join(top_reference.text.split())
+        category = self._extract_aircraft_category(query)
+        if self._query_targets_circling_minima(query) and category:
+            circling = self._extract_circling_radius_data(flattened, category)
+            radius_value = circling.get("radius_nm")
+            elevation = circling.get("elevation_band")
+            if radius_value:
+                elevation_text = elevation or "low-elevation aerodromes"
+                return (
+                    f"If you are flying Category {category}, use {radius_value} for {elevation_text} and use larger radii "
+                    "from the same table as elevation increases."
+                )
+
+        sentence = self._extract_operational_sentence(flattened)
         return (
             f"Use {top_reference.citation} first. In plain terms: {sentence} "
             "Then confirm any limits and exceptions in the cited reference text."
         )
 
     def _build_example(self, query: str, top_reference: ReferenceItem) -> str:
+        flattened = " ".join(top_reference.text.split())
+        category = self._extract_aircraft_category(query)
+        if self._query_targets_circling_minima(query) and category:
+            circling = self._extract_circling_radius_data(flattened, category)
+            radius_value = circling.get("radius_nm")
+            elevation = circling.get("elevation_band")
+            if radius_value:
+                elevation_text = elevation or "a low-elevation aerodrome"
+                return (
+                    f"Example: with a Category {category} aircraft circling at {elevation_text}, plan to stay within {radius_value}. "
+                    f"If elevation is higher, move to the next higher Category {category} value in the same table."
+                )
+
         query_clean = " ".join(query.split())
         return (
             f"If your question is '{query_clean}', open {top_reference.citation} and extract the exact number/condition "
@@ -367,6 +438,9 @@ class SearchService:
             return []
 
         top = references[0]
+        if query_profile.get("strict_single_reference"):
+            return [top]
+
         filtered: list[ReferenceItem] = [top]
         score_floor = max(0.55, top.score * 0.72)
 
@@ -402,17 +476,36 @@ class SearchService:
 
         return True
 
-    def _extract_circling_radius(self, text: str, category: str) -> str:
-        table_match = re.search(
-            r"\b0FT\s+1000FT\s+([0-9.]+NM)\s+([0-9.]+NM)\s+([0-9.]+NM)\s+([0-9.]+NM)\b",
-            text,
-            re.IGNORECASE,
-        )
-        if table_match:
-            category_index = {"A": 1, "B": 2, "C": 3, "D": 4}.get(category)
-            if category_index:
-                return table_match.group(category_index)
-        return ""
+    def _query_targets_circling_minima(self, query: str) -> bool:
+        query_lower = query.lower()
+        has_circling = "circling" in query_lower
+        has_measure = any(term in query_lower for term in ("radius", "radii", "minima", "minimum"))
+        return has_circling and has_measure
+
+    def _extract_aircraft_category(self, query: str) -> str:
+        match = re.search(r"\bcat(?:egory)?\s*([abcd])\b", query, re.IGNORECASE)
+        if not match:
+            return ""
+        return match.group(1).upper()
+
+    def _extract_circling_radius_data(self, text: str, category: str) -> dict[str, str]:
+        category_key = category.lower()
+        category_column = {"a": "a", "b": "b", "c": "c", "d": "d"}.get(category_key)
+        if not category_column:
+            return {}
+
+        rows = list(CIRCLING_ROW_PATTERN.finditer(text))
+        if not rows:
+            return {}
+
+        first_row = rows[0]
+        value = first_row.group(category_column)
+        from_ft = first_row.group("from")
+        to_ft = first_row.group("to")
+        return {
+            "radius_nm": f"{value}NM",
+            "elevation_band": f"{from_ft}-{to_ft} FT aerodrome elevation",
+        }
 
     def _infer_page_ref(self, text: str, citation: str = "") -> str:
         scan = text[:12000]
@@ -426,7 +519,10 @@ class SearchService:
                 preceding = [m for m in matches if m.start() <= subsection_match.start()]
                 if preceding:
                     return " ".join(preceding[-1].group(0).split())
-        return " ".join(matches[0].group(0).split())
+                following = [m for m in matches if m.start() > subsection_match.start()]
+                if following:
+                    return " ".join(following[0].group(0).split())
+        return self._select_best_page_ref([" ".join(match.group(0).split()) for match in matches])
 
     def _infer_table_ref(self, text: str) -> str:
         match = TABLE_REF_PATTERN.search(text[:12000])
@@ -468,6 +564,41 @@ class SearchService:
         if table_ref:
             out = f"{out}. {table_ref}"
         return out
+
+    def _select_best_page_ref(self, refs: list[str]) -> str:
+        if not refs:
+            return ""
+
+        ordered_unique: list[str] = []
+        seen: set[str] = set()
+        for ref in refs:
+            normalized = " ".join(ref.split())
+            key = normalized.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            ordered_unique.append(normalized)
+
+        if len(ordered_unique) == 1:
+            return ordered_unique[0]
+
+        parsed: list[tuple[str, int, str]] = []
+        for ref in ordered_unique:
+            match = PAGE_REF_PARSE_PATTERN.match(ref)
+            if not match:
+                continue
+            parsed.append((match.group("prefix").upper(), int(match.group("page")), ref))
+
+        if not parsed:
+            return ordered_unique[0]
+
+        first_prefix = parsed[0][0]
+        same_prefix = [item for item in parsed if item[0] == first_prefix]
+        if len(same_prefix) < 2:
+            return ordered_unique[0]
+
+        best = min(same_prefix, key=lambda item: item[1])
+        return best[2]
 
     def _extract_operational_sentence(self, text: str) -> str:
         candidates = [segment.strip() for segment in re.split(r"(?<=[.!?])\s+", text) if segment.strip()]

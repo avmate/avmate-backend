@@ -50,7 +50,7 @@ class IndexerService:
                         failed_documents += 1
                         continue
 
-                    sections = split_into_sections(text)
+                    sections = split_into_sections(text, regulation_type=document.get("type", ""))
                     if not sections:
                         fallback_citation = Path(document["path"]).stem
                         sections = [
