@@ -51,10 +51,20 @@ STOP_WORDS = {
     "under",
     "using",
 }
+LOW_SIGNAL_TERMS = {
+    "aircraft",
+    "pilot",
+    "flight",
+    "category",
+    "cat",
+}
 
 PAGE_REF_PATTERN = re.compile(r"\b(?:GEN|ENR|AD|AIP)\s+\d+(?:\.\d+)?\s*-\s*\(?\d+\)?\b", re.IGNORECASE)
 TABLE_REF_PATTERN = re.compile(r"\bTable\s+\d+(?:\.\d+)+\b", re.IGNORECASE)
-SUBSECTION_PATTERN = re.compile(r"\b(\d+(?:\.\d+)+)\b")
+SUBSECTION_PATTERN = re.compile(r"\b([1-9]\d?(?:\.\d+){1,4})\b")
+AIP_SUBSECTION_LINE_PATTERN = re.compile(
+    r"(?m)^(?P<label>[1-9]\d?(?:\.\d+){1,4})\s+(?P<heading>[^\n]{2,220})$"
+)
 PAGE_REF_PARSE_PATTERN = re.compile(
     r"^(?P<prefix>(?:GEN|ENR|AD|AIP)\s+\d+(?:\.\d+)?)\s*-\s*\(?(?P<page>\d+)\)?$",
     re.IGNORECASE,
@@ -87,7 +97,7 @@ class SearchService:
         if query_profile.get("strict_single_reference"):
             candidate_k = min(max(top_k * 24, 140), 260)
         else:
-            candidate_k = min(max(top_k * 8, 24), 80)
+            candidate_k = min(max(top_k * 24, 120), 320)
         results = self._vector_store.query(query_embeddings=query_embedding, top_k=candidate_k)
         requested_citations = [citation.lower() for citation in extract_citations(query)]
 
@@ -112,20 +122,39 @@ class SearchService:
             section_id = metadata.get("section_id", "")
             canonical = canonical_sections.get(section_id, {})
             raw_citation = str(canonical.get("citation", metadata.get("citation", "Unknown")) or "Unknown")
+            regulation_type = str(canonical.get("regulation_type", "UNKNOWN") or "UNKNOWN")
             canonical_text = canonical.get("text", document)
-            page_ref = canonical.get("page_ref", "") or self._infer_page_ref(canonical_text, raw_citation)
-            table_ref = canonical.get("table_ref", "") or self._infer_table_ref(canonical_text)
+            subsection_hint = ""
+            focused_text = canonical_text
+            if regulation_type.upper() == "AIP":
+                subsection_hint, subsection_text = self._select_best_aip_subsection(
+                    canonical_text,
+                    raw_citation,
+                    query_profile,
+                )
+                if subsection_text:
+                    focused_text = subsection_text
+
+            page_ref = self._resolve_page_ref(
+                canonical_text,
+                raw_citation,
+                canonical.get("page_ref", ""),
+                subsection_hint,
+            )
+            table_ref = canonical.get("table_ref", "") or self._infer_table_ref(focused_text)
             citation = self._format_output_citation(
                 raw_citation,
-                str(canonical.get("regulation_type", "UNKNOWN") or "UNKNOWN"),
+                regulation_type,
                 page_ref,
                 table_ref,
-                canonical_text,
+                focused_text,
+                subsection_hint=subsection_hint,
             )
             combined_score, passes_gate = self._combine_score(
                 query_profile=query_profile,
-                document=canonical_text,
+                document=focused_text,
                 citation=raw_citation,
+                regulation_type=regulation_type,
                 semantic_score=semantic_score,
                 requested_citations=requested_citations,
             )
@@ -133,11 +162,11 @@ class SearchService:
                 section_id=section_id,
                 regulation_id=canonical.get("regulation_id", raw_citation),
                 citation=citation,
-                title=self._refine_title(canonical.get("title", "Untitled"), raw_citation, canonical_text),
-                regulation_type=str(canonical.get("regulation_type", "UNKNOWN") or "UNKNOWN"),
+                title=self._refine_title(canonical.get("title", "Untitled"), raw_citation, focused_text),
+                regulation_type=regulation_type,
                 source_file=canonical.get("source_file", ""),
                 source_url=canonical.get("source_url", ""),
-                text=canonical_text,
+                text=focused_text,
                 part=canonical.get("part", ""),
                 page_ref=page_ref,
                 table_ref=table_ref,
@@ -154,6 +183,20 @@ class SearchService:
 
         references = self._dedupe_references(ranked_items, top_k)
         references = self._filter_final_references(references, query_profile, top_k)
+        lexical_fallback_refs: list[ReferenceItem] = []
+        should_try_lexical_fallback = not references or bool(query_profile.get("weather_minima_intent"))
+        if should_try_lexical_fallback:
+            lexical_fallback_refs = self._lexical_fallback_references(query_profile, requested_citations, top_k)
+            if lexical_fallback_refs:
+                if not references:
+                    references = lexical_fallback_refs
+                else:
+                    top = references[0]
+                    top_text = " ".join((top.text or "").split()).lower()
+                    top_toc = self._table_of_contents_penalty(top.text) >= 0.1
+                    top_weather_hit = bool(re.search(r"\b(?:special\s+)?alternate\s+weather\s+minima\b", top_text))
+                    if top_toc or not top_weather_hit:
+                        references = lexical_fallback_refs
 
         if not references:
             return SearchResponse(
@@ -251,7 +294,7 @@ class SearchService:
         terms = [
             token
             for token in re.findall(r"[a-z0-9.()/-]+", query_lower)
-            if len(token) > 2 and token not in STOP_WORDS
+            if len(token) > 2 and token not in STOP_WORDS and token not in LOW_SIGNAL_TERMS
         ]
         phrases = [phrase for phrase in re.findall(r"\b[a-z0-9]+\s+[a-z0-9]+\b", query_lower) if len(phrase) > 7]
 
@@ -262,8 +305,18 @@ class SearchService:
             required_patterns.append(re.compile(rf"\bcat(?:egory)?\s*{cat}\b", re.IGNORECASE))
         if "circling" in query_lower:
             required_patterns.append(re.compile(r"\bcircling\b", re.IGNORECASE))
+        has_measure = any(term in query_lower for term in ("radius", "radii", "minima", "minimum"))
         if "radius" in query_lower or "radii" in query_lower or "minima" in query_lower or "minimum" in query_lower:
             required_patterns.append(re.compile(r"\b(?:radi(?:us|i)|minima|minimum)\b", re.IGNORECASE))
+        weather_minima_intent = (
+            ("alternate" in query_lower)
+            and ("weather" in query_lower)
+            and any(token in query_lower for token in ("minima", "minimum"))
+        )
+        if weather_minima_intent:
+            required_patterns.append(re.compile(r"\balternate\b", re.IGNORECASE))
+            required_patterns.append(re.compile(r"\bweather\b", re.IGNORECASE))
+            required_patterns.append(re.compile(r"\b(?:minima|minimum)\b", re.IGNORECASE))
 
         intent_tokens = [
             token
@@ -278,6 +331,8 @@ class SearchService:
                 "fuel",
                 "ifr",
                 "vfr",
+                "alternate",
+                "weather",
             )
             if token in query_lower
         ]
@@ -288,6 +343,14 @@ class SearchService:
             )
         )
         strict_single_reference = bool(category_match and "circling" in query_lower and numeric_intent)
+        if weather_minima_intent:
+            strict_single_reference = True
+        aip_preferred_intent = bool(
+            weather_minima_intent
+            or ("circling" in query_lower and has_measure)
+            or ("qnh" in query_lower)
+            or ("aip" in query_lower)
+        )
         return {
             "query_lower": query_lower,
             "terms": list(dict.fromkeys(terms)),
@@ -296,6 +359,8 @@ class SearchService:
             "intent_tokens": intent_tokens,
             "numeric_intent": numeric_intent,
             "strict_single_reference": strict_single_reference,
+            "weather_minima_intent": weather_minima_intent,
+            "aip_preferred_intent": aip_preferred_intent,
         }
 
     def _combine_score(
@@ -303,6 +368,7 @@ class SearchService:
         query_profile: dict,
         document: str,
         citation: str,
+        regulation_type: str,
         semantic_score: float,
         requested_citations: list[str],
     ) -> tuple[float, bool]:
@@ -313,9 +379,11 @@ class SearchService:
         intent_tokens = query_profile["intent_tokens"]
         numeric_intent = bool(query_profile.get("numeric_intent"))
         strict_single_reference = bool(query_profile.get("strict_single_reference"))
+        aip_preferred_intent = bool(query_profile.get("aip_preferred_intent"))
 
         citation_lower = citation.lower()
         document_lower = document.lower()
+        is_aip_result = str(regulation_type or "").upper() == "AIP" or citation_lower.startswith("aip ")
 
         citation_exact = any(requested == citation_lower for requested in requested_citations)
         citation_mentioned = bool(citation_lower) and citation_lower in query_lower
@@ -337,6 +405,7 @@ class SearchService:
                 or re.search(r"\b0ft\s+1000ft\b", document_lower)
             )
         )
+        toc_penalty = self._table_of_contents_penalty(document)
 
         passes_gate = citation_exact or citation_mentioned
         if not passes_gate:
@@ -346,6 +415,10 @@ class SearchService:
             if numeric_intent and not numeric_evidence and semantic_score < 0.72:
                 passes_gate = False
             if strict_single_reference and not circling_table_evidence and semantic_score < 0.8:
+                passes_gate = False
+            if toc_penalty >= 0.2 and semantic_score < 0.85:
+                passes_gate = False
+            if aip_preferred_intent and not is_aip_result and semantic_score < 0.92:
                 passes_gate = False
 
         score = semantic_score * 0.62
@@ -371,6 +444,9 @@ class SearchService:
             score += 0.24
         if strict_single_reference and not circling_table_evidence:
             score -= 0.15
+        if aip_preferred_intent and not is_aip_result:
+            score -= 0.35
+        score -= toc_penalty
 
         return max(0.0, min(1.0, score)), passes_gate
 
@@ -381,20 +457,140 @@ class SearchService:
         requested_citations: list[str],
     ) -> list[tuple[float, ReferenceItem]]:
         rescued: list[tuple[float, ReferenceItem]] = []
+        strict_rescue = bool(query_profile.get("strict_single_reference")) or bool(query_profile.get("required_patterns"))
         for semantic_score, item in sorted(fallback_items, key=lambda pair: pair[0], reverse=True):
-            combined, _ = self._combine_score(
+            combined, passes_gate = self._combine_score(
                 query_profile=query_profile,
                 document=item.text,
                 citation=item.citation,
+                regulation_type=item.regulation_type,
                 semantic_score=semantic_score,
                 requested_citations=requested_citations,
             )
+            if strict_rescue and not passes_gate:
+                continue
             if semantic_score >= 0.5 or combined >= 0.45:
                 item.score = round(combined, 4)
                 rescued.append((combined, item))
             if len(rescued) >= 10:
                 break
         return rescued
+
+    def _lexical_fallback_references(
+        self,
+        query_profile: dict,
+        requested_citations: list[str],
+        top_k: int,
+    ) -> list[ReferenceItem]:
+        terms = [term for term in query_profile.get("terms", []) if len(term) >= 3]
+        if not terms:
+            return []
+
+        regulation_hint = "AIP" if query_profile.get("aip_preferred_intent") else None
+        query_terms = [term for term in terms if term not in {"aircraft", "pilot", "flight", "category", "cat"}]
+        if not query_terms:
+            query_terms = terms
+
+        sections = self._canonical_store.search_sections_by_terms(
+            query_terms,
+            limit=5000,
+            regulation_type=regulation_hint,
+        )
+        if not sections:
+            return []
+
+        required_patterns = query_profile.get("required_patterns", [])
+        phrases = query_profile.get("phrases", [])
+        intent_tokens = query_profile.get("intent_tokens", [])
+        numeric_intent = bool(query_profile.get("numeric_intent"))
+
+        ranked: list[tuple[float, ReferenceItem]] = []
+        for section in sections:
+            raw_citation = str(section.get("citation", "Unknown") or "Unknown")
+            regulation_type = str(section.get("regulation_type", "UNKNOWN") or "UNKNOWN")
+            canonical_text = str(section.get("text", "") or "")
+            if not canonical_text.strip():
+                continue
+
+            subsection_hint = ""
+            focused_text = canonical_text
+            if regulation_type.upper() == "AIP":
+                subsection_hint, subsection_text = self._select_best_aip_subsection(
+                    canonical_text,
+                    raw_citation,
+                    query_profile,
+                )
+                if subsection_text:
+                    focused_text = subsection_text
+
+            page_ref = self._resolve_page_ref(
+                canonical_text,
+                raw_citation,
+                section.get("page_ref", ""),
+                subsection_hint,
+            )
+            table_ref = section.get("table_ref", "") or self._infer_table_ref(focused_text)
+            citation = self._format_output_citation(
+                raw_citation,
+                regulation_type,
+                page_ref,
+                table_ref,
+                focused_text,
+                subsection_hint=subsection_hint,
+            )
+
+            text_lower = focused_text.lower()
+            citation_lower = raw_citation.lower()
+            lexical_hits = sum(1 for term in terms if term in text_lower or term in citation_lower)
+            lexical_ratio = lexical_hits / max(len(terms), 1)
+            phrase_hits = sum(1 for phrase in phrases if phrase in text_lower)
+            required_ok = all(pattern.search(focused_text) or pattern.search(citation) for pattern in required_patterns)
+            intent_hits = sum(1 for token in intent_tokens if token in text_lower)
+            toc_penalty = self._table_of_contents_penalty(canonical_text)
+            numeric_evidence = bool(re.search(r"\b\d+(?:\.\d+)?\s*(?:nm|ft|m|kts|kt|hpa)\b", text_lower))
+
+            if required_patterns and not required_ok:
+                continue
+
+            score = 0.22
+            score += lexical_ratio * 0.52
+            score += min(phrase_hits * 0.08, 0.2)
+            if required_patterns and required_ok:
+                score += 0.14
+            if intent_hits:
+                score += 0.06
+            if numeric_intent:
+                score += 0.06 if numeric_evidence else -0.08
+            if any(requested == citation_lower for requested in requested_citations):
+                score += 0.2
+            score -= toc_penalty
+
+            if score < 0.42:
+                continue
+
+            reference = ReferenceItem(
+                section_id=str(section.get("section_id", "")),
+                regulation_id=str(section.get("regulation_id", raw_citation)),
+                citation=citation,
+                title=self._refine_title(str(section.get("title", "Untitled")), raw_citation, focused_text),
+                regulation_type=regulation_type,
+                source_file=str(section.get("source_file", "")),
+                source_url=str(section.get("source_url", "")),
+                text=focused_text,
+                part=str(section.get("part", "")),
+                page_ref=page_ref,
+                table_ref=table_ref,
+                section_index=int(section.get("section_order", 0) or 0),
+                chunk_index=0,
+                score=round(max(0.0, min(1.0, score)), 4),
+            )
+            ranked.append((reference.score, reference))
+
+        if not ranked:
+            return []
+
+        references = self._dedupe_references(ranked, max(top_k * 3, top_k))
+        return self._filter_final_references(references, query_profile, top_k)
 
     def _build_answer(self, query: str, top_reference: ReferenceItem) -> str:
         flattened = " ".join(top_reference.text.split())
@@ -525,6 +721,9 @@ class SearchService:
         if required_patterns and not all(pattern.search(text) for pattern in required_patterns):
             return False
 
+        if query_profile.get("aip_preferred_intent") and item.regulation_type.upper() != "AIP":
+            return False
+
         if intent_tokens:
             hits = sum(1 for token in intent_tokens if token in text)
             if hits == 0:
@@ -569,12 +768,149 @@ class SearchService:
             "elevation_band": f"{from_ft}-{to_ft} FT aerodrome elevation",
         }
 
-    def _infer_page_ref(self, text: str, citation: str = "") -> str:
+    def _extract_aip_subsection_blocks(self, text: str) -> list[tuple[str, str]]:
+        matches = list(AIP_SUBSECTION_LINE_PATTERN.finditer(text[:20000]))
+        if not matches:
+            return []
+
+        blocks: list[tuple[str, str]] = []
+        for index, match in enumerate(matches):
+            label = match.group("label")
+            heading = match.group("heading").strip()
+            if not re.search(r"[A-Za-z]{2,}", heading):
+                continue
+            start = match.start()
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+            block = text[start:end].strip()
+            if len(block) < 20:
+                continue
+            blocks.append((label, block))
+        return blocks
+
+    def _expand_aip_subsection_block(self, blocks: list[tuple[str, str]], label: str) -> str:
+        if not blocks or not label:
+            return ""
+
+        by_index = {value[0]: idx for idx, value in enumerate(blocks)}
+        if label not in by_index:
+            return ""
+
+        start_index = by_index[label]
+        prefix = f"{label}."
+        expanded: list[str] = []
+        for idx in range(start_index, len(blocks)):
+            current_label, current_block = blocks[idx]
+            if idx == start_index:
+                expanded.append(current_block)
+                continue
+            if current_label.startswith(prefix):
+                expanded.append(current_block)
+                continue
+            break
+        return "\n".join(expanded).strip()
+
+    def _select_best_aip_subsection(self, text: str, citation: str, query_profile: dict) -> tuple[str, str]:
+        blocks = self._extract_aip_subsection_blocks(text)
+        if not blocks:
+            return "", ""
+
+        by_label = {label: block for label, block in blocks}
+        query_lower = str(query_profile.get("query_lower", "") or "")
+        explicit_labels = set(SUBSECTION_PATTERN.findall(query_lower))
+        for label in explicit_labels:
+            if label in by_label:
+                return label, by_label[label]
+
+        if self._query_targets_circling_minima(query_lower):
+            category = self._extract_aircraft_category(query_lower)
+            if category:
+                for label, block in blocks:
+                    flattened = " ".join(block.split())
+                    circling = self._extract_circling_radius_data(flattened, category)
+                    if circling.get("radius_nm"):
+                        expanded = self._expand_aip_subsection_block(blocks, label)
+                        return label, expanded or block
+
+        if query_profile.get("weather_minima_intent"):
+            for label, block in blocks:
+                heading_line = (block.splitlines()[0] if block.splitlines() else "").lower()
+                if re.search(r"\bspecial\s+alternate\s+weather\s+minima\b", heading_line):
+                    expanded = self._expand_aip_subsection_block(blocks, label)
+                    return label, expanded or block
+
+        citation_match = re.search(r"\bAIP\s+([1-9]\d?(?:\.\d+){1,4})\b", citation, re.IGNORECASE)
+        if citation_match:
+            cited_label = citation_match.group(1)
+            if cited_label in by_label:
+                default_label = cited_label
+            else:
+                default_label = ""
+        else:
+            default_label = ""
+
+        terms = query_profile.get("terms", [])
+        phrases = query_profile.get("phrases", [])
+        required_patterns = query_profile.get("required_patterns", [])
+        intent_tokens = query_profile.get("intent_tokens", [])
+
+        best_label = default_label
+        best_block = by_label.get(default_label, "")
+        best_score = -1.0
+
+        for label, block in blocks:
+            lower = block.lower()
+            heading_line = (block.splitlines()[0] if block.splitlines() else "").lower()
+            lexical_hits = sum(1 for term in terms if term in lower)
+            phrase_hits = sum(1 for phrase in phrases if phrase in lower)
+            heading_hits = sum(1 for term in terms if term in heading_line)
+            heading_phrase_hits = sum(1 for phrase in phrases if phrase in heading_line)
+            required_hits = sum(1 for pattern in required_patterns if pattern.search(block))
+            intent_hits = sum(1 for token in intent_tokens if token in lower)
+            hierarchy_bonus = max(0.0, 1.2 - (label.count(".") * 0.35))
+            label_bonus = 2.0 if label in explicit_labels else 0.0
+            score = (
+                (lexical_hits * 0.35)
+                + (phrase_hits * 0.55)
+                + (heading_hits * 2.2)
+                + (heading_phrase_hits * 2.8)
+                + (required_hits * 1.4)
+                + (intent_hits * 0.8)
+                + hierarchy_bonus
+                + label_bonus
+            )
+            if score > best_score:
+                best_score = score
+                best_label = label
+                best_block = block
+
+        if best_score <= 0 and default_label:
+            expanded = self._expand_aip_subsection_block(blocks, default_label)
+            return default_label, expanded or by_label.get(default_label, "")
+        if best_score <= 0:
+            return "", ""
+        expanded = self._expand_aip_subsection_block(blocks, best_label)
+        return best_label, expanded or best_block
+
+    def _table_of_contents_penalty(self, text: str) -> float:
+        scan = text[:30000]
+        dot_leader_hits = len(re.findall(r"\.{5,}\s*(?:GEN|ENR|AD|AIP)\s+\d", scan, flags=re.IGNORECASE))
+        heading_hits = len(
+            re.findall(
+                r"(?m)^[0-9]+(?:\.[0-9]+){0,4}\s+[A-Z][A-Za-z /,&()-]{4,90}\.{4,}",
+                scan,
+            )
+        )
+        if dot_leader_hits == 0 and heading_hits == 0:
+            return 0.0
+        raw = (dot_leader_hits * 0.045) + (heading_hits * 0.03)
+        return min(0.4, raw)
+
+    def _infer_page_ref(self, text: str, citation: str = "", subsection_hint: str = "") -> str:
         scan = text[:12000]
         matches = list(PAGE_REF_PATTERN.finditer(scan))
         if not matches:
             return ""
-        subsection = self._infer_subsection(citation, scan)
+        subsection = subsection_hint or self._infer_subsection(citation, scan)
         if subsection:
             subsection_match = re.search(rf"\b{re.escape(subsection)}\b", scan)
             if subsection_match:
@@ -585,6 +921,34 @@ class SearchService:
                 if following:
                     return " ".join(following[0].group(0).split())
         return self._select_best_page_ref([" ".join(match.group(0).split()) for match in matches])
+
+    def _resolve_page_ref(
+        self,
+        canonical_text: str,
+        raw_citation: str,
+        canonical_page_ref: str,
+        subsection_hint: str,
+    ) -> str:
+        canonical_page = " ".join((canonical_page_ref or "").split())
+        if not subsection_hint:
+            return canonical_page or self._infer_page_ref(canonical_text, raw_citation)
+
+        inferred = self._infer_page_ref(canonical_text, raw_citation, subsection_hint=subsection_hint)
+        if not canonical_page:
+            return inferred
+        if not inferred:
+            return canonical_page
+        if inferred.lower() == canonical_page.lower():
+            return canonical_page
+
+        scan = canonical_text[:12000]
+        subsection_match = re.search(rf"\b{re.escape(subsection_hint)}\b", scan)
+        markers = list(PAGE_REF_PATTERN.finditer(scan))
+        if subsection_match and markers:
+            first_marker_start = markers[0].start()
+            if subsection_match.start() < first_marker_start:
+                return canonical_page
+        return inferred
 
     def _infer_table_ref(self, text: str) -> str:
         match = TABLE_REF_PATTERN.search(text[:12000])
@@ -606,12 +970,13 @@ class SearchService:
         page_ref: str,
         table_ref: str,
         text: str,
+        subsection_hint: str = "",
     ) -> str:
         normalized = " ".join((citation or "").split()) or "Unknown"
         if str(regulation_type or "").upper() != "AIP":
             return normalized
 
-        subsection = self._infer_subsection(normalized, text)
+        subsection = subsection_hint or self._infer_subsection(normalized, text)
         parts: list[str] = []
         if page_ref:
             parts.append(f"AIP {page_ref}")
@@ -688,7 +1053,13 @@ class SearchService:
             "mos",
             "caa",
         }
-        if normalized.lower() not in generic_titles:
+        noisy_titles = {
+            "mos prior",
+            "cao and",
+            "car contains",
+            "cao document",
+        }
+        if normalized.lower() not in generic_titles and normalized.lower() not in noisy_titles:
             return normalized[:160]
 
         lines = [line.strip() for line in text.splitlines() if line.strip()]
@@ -709,5 +1080,13 @@ class SearchService:
                 if heading:
                     return f"AIP {match.group('section')} {heading}"[:160]
                 return f"AIP {match.group('section')}"[:160]
+
+        first_compact = " ".join(lines[0].split())
+        match = re.match(r"^(?P<section>\d+(?:\.\d+)+)\s*(?P<heading>.*)$", first_compact)
+        if match:
+            heading = match.group("heading").strip(" .:-")
+            if heading:
+                return f"AIP {match.group('section')} {heading}"[:160]
+            return f"AIP {match.group('section')}"[:160]
 
         return citation[:160]
