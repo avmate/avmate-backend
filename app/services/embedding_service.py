@@ -23,8 +23,10 @@ class EmbeddingService:
                 self._model = SentenceTransformer(self._model_name)
         return self._model
 
-    def encode(self, texts: list[str]) -> list[list[float]]:
+    def encode(self, texts: list[str], batch_size: int | None = None) -> list[list[float]]:
         model = self.load()
-        vectors = model.encode(texts, normalize_embeddings=True)
+        kwargs = {"normalize_embeddings": True}
+        if batch_size:
+            kwargs["batch_size"] = batch_size
+        vectors = model.encode(texts, **kwargs)
         return vectors.tolist()
-

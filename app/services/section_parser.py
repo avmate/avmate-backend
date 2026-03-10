@@ -8,6 +8,24 @@ SECTION_PATTERN = re.compile(
     r"(?P<citation>(?:CASR|CAR|CAO|AIP|MOS|CAA)\s+(?:Part\s+)?[0-9A-Za-z.\-]+(?:\([0-9A-Za-z]+\))*)",
     re.IGNORECASE,
 )
+CITATION_QUERY_PATTERN = re.compile(
+    r"\b(?:CASR|CAR|CAO|AIP|MOS|CAA)\s+(?:Part\s+)?[0-9A-Za-z.\-]+(?:\([0-9A-Za-z]+\))*",
+    re.IGNORECASE,
+)
+
+
+def extract_citations(text: str) -> list[str]:
+    citations: list[str] = []
+    for match in CITATION_QUERY_PATTERN.finditer(text):
+        citation = " ".join(match.group(0).split())
+        if citation not in citations:
+            citations.append(citation)
+    return citations
+
+
+def infer_part(citation: str) -> str:
+    match = re.search(r"([0-9]+(?:\.[0-9]+)?)", citation)
+    return match.group(1) if match else ""
 
 
 def split_into_sections(text: str) -> list[dict]:
@@ -27,6 +45,7 @@ def split_into_sections(text: str) -> list[dict]:
                 "regulation_id": citation,
                 "citation": citation,
                 "title": title,
+                "part": infer_part(citation),
                 "text": section_text,
             }
         )
@@ -44,4 +63,3 @@ def chunk_words(text: str, chunk_size: int, overlap: int) -> Iterable[str]:
         if chunk:
             chunks.append(chunk)
     return chunks
-

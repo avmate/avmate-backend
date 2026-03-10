@@ -57,6 +57,7 @@ def root() -> HealthResponse:
         embeddings_loaded=embeddings.is_loaded,
         collection_count=vector_store.count(),
         manifest_source=catalog.source_label(),
+        vector_store_status="ready" if vector_store.available else f"unavailable: {vector_store.error}",
     )
 
 

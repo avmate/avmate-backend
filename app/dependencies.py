@@ -10,7 +10,6 @@ from app.services.search_service import SearchService
 from app.services.vector_store import UnavailableVectorStore, VectorStore
 
 
-@lru_cache(maxsize=1)
 def get_vector_store() -> VectorStore | UnavailableVectorStore:
     settings = get_settings()
     try:
