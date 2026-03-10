@@ -22,6 +22,7 @@ class Settings:
     app_version: str = os.getenv("APP_VERSION", "3.0.0")
     app_env: str = os.getenv("APP_ENV", "production")
     port: int = int(os.getenv("PORT", "8000"))
+    database_url: str = os.getenv("DATABASE_URL", f"sqlite:///{(BASE_DIR / 'avmate.db').as_posix()}")
     chroma_dir: Path = Path(os.getenv("CHROMA_DIR", str(BASE_DIR / "chroma_db")))
     collection_name: str = os.getenv("CHROMA_COLLECTION", "avmate_regulations")
     embedding_model_name: str = os.getenv(

@@ -3,15 +3,17 @@ from __future__ import annotations
 import re
 
 from app.schemas import ReferenceItem, SearchResponse
+from app.services.canonical_store import CanonicalStore
 from app.services.embedding_service import EmbeddingService
 from app.services.section_parser import extract_citations
 from app.services.vector_store import VectorStore
 
 
 class SearchService:
-    def __init__(self, embeddings: EmbeddingService, vector_store: VectorStore) -> None:
+    def __init__(self, embeddings: EmbeddingService, vector_store: VectorStore, canonical_store: CanonicalStore) -> None:
         self._embeddings = embeddings
         self._vector_store = vector_store
+        self._canonical_store = canonical_store
 
     def search(self, query: str, top_k: int) -> SearchResponse:
         query_embedding = self._embeddings.encode([query])
@@ -22,25 +24,38 @@ class SearchService:
         metadatas = (results.get("metadatas") or [[]])[0]
         distances = (results.get("distances") or [[]])[0]
 
+        section_ids: list[str] = []
+        for metadata in metadatas:
+            if metadata and metadata.get("section_id"):
+                section_ids.append(metadata["section_id"])
+        canonical_sections = {
+            section["section_id"]: section for section in self._canonical_store.get_sections_by_ids(section_ids)
+        }
+
         ranked_items: list[tuple[float, ReferenceItem]] = []
         for index, document in enumerate(documents):
             metadata = metadatas[index] if index < len(metadatas) else {}
             distance = float(distances[index]) if index < len(distances) else 1.0
             semantic_score = max(0.0, min(1.0, 1.0 - distance))
-            citation = metadata.get("citation", "Unknown")
+            section_id = metadata.get("section_id", "")
+            canonical = canonical_sections.get(section_id, {})
+            citation = canonical.get("citation", metadata.get("citation", "Unknown"))
             combined_score = self._combine_score(query, document, citation, semantic_score, requested_citations)
             ranked_items.append(
                 (
                     combined_score,
                     ReferenceItem(
-                        regulation_id=metadata.get("regulation_id", citation),
+                        section_id=section_id,
+                        regulation_id=canonical.get("regulation_id", citation),
                         citation=citation,
-                        title=metadata.get("title", "Untitled"),
-                        regulation_type=metadata.get("regulation_type", "UNKNOWN"),
-                        source_file=metadata.get("source_file", ""),
-                        source_url=metadata.get("source_url", ""),
-                        text=document,
-                        part=metadata.get("part", ""),
+                        title=canonical.get("title", "Untitled"),
+                        regulation_type=canonical.get("regulation_type", "UNKNOWN"),
+                        source_file=canonical.get("source_file", ""),
+                        source_url=canonical.get("source_url", ""),
+                        text=canonical.get("text", document),
+                        part=canonical.get("part", ""),
+                        page_ref=canonical.get("page_ref", ""),
+                        table_ref=canonical.get("table_ref", ""),
                         section_index=int(metadata.get("section_index", 0)),
                         chunk_index=int(metadata.get("chunk_index", 0)),
                         score=round(combined_score, 4),
@@ -57,6 +72,7 @@ class SearchService:
                 plain_english="The regulation index is empty or does not contain a close match for that query yet.",
                 example="Try a narrower query such as 'CASR 61.385 instrument rating requirements'.",
                 study_questions=["Which exact regulation number is most relevant to your question?"],
+                study_answers=["Identify the controlling citation first, then read the operative text before forming an answer."],
                 references=[],
                 citations=[],
                 verbatim_text="",
@@ -82,6 +98,15 @@ class SearchService:
             f"What does {citations[0]} require in the exact wording of the regulation?",
             "Which conditions, exceptions, or definitions in the cited text could change the answer?",
             "What related regulation or MOS provision should be cross-checked before concluding?",
+            "What source document and page reference contain the controlling text?",
+            "If the text includes a table or standard, what operational number should you extract from it?",
+        ]
+        study_answers = [
+            f"Read the verbatim text of {citations[0]} and restate the operative requirement without changing its meaning.",
+            "Check the same section and nearby cited material for carve-outs, notes, and defined terms.",
+            f"Review {', '.join(citations[1:3]) if len(citations) > 1 else 'related AIP or MOS material'} before relying on a conclusion.",
+            f"The controlling source is {top_reference.source_file} {top_reference.page_ref or ''}".strip(),
+            "Extract the specific table value, limit, or radius from the verbatim source text and tie it back to the aircraft category or condition asked about.",
         ]
         contextual_notes = self._build_contextual_notes(query, references)
         confidence = max(0, min(99, int(references[0].score * 100)))
@@ -92,6 +117,7 @@ class SearchService:
             plain_english=plain_english,
             example=example,
             study_questions=study_questions,
+            study_answers=study_answers,
             references=references,
             citations=citations,
             verbatim_text=top_reference.text,

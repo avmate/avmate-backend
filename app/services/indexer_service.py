@@ -10,6 +10,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from app.config import Settings
+from app.services.canonical_store import CanonicalStore
 from app.services.embedding_service import EmbeddingService
 from app.services.r2_catalog import RegulationCatalog
 from app.services.section_parser import chunk_words, split_into_sections
@@ -23,11 +24,13 @@ class IndexerService:
         catalog: RegulationCatalog,
         embeddings: EmbeddingService,
         vector_store: VectorStore,
+        canonical_store: CanonicalStore,
     ) -> None:
         self._settings = settings
         self._catalog = catalog
         self._embeddings = embeddings
         self._vector_store = vector_store
+        self._canonical_store = canonical_store
         self._session = self._build_session()
 
     def rebuild_index(self) -> dict[str, int]:
@@ -35,65 +38,96 @@ class IndexerService:
         total_chunks = 0
         failed_documents = 0
         documents = self._catalog.load_documents()
+        run_id = self._canonical_store.begin_run(documents_seen=len(documents))
+        self._canonical_store.deactivate_all_documents()
         self._vector_store.reset()
 
-        for document in documents:
-            try:
-                text = self._extract_pdf_text(document["source_url"])
-                if not text.strip():
+        try:
+            for document in documents:
+                try:
+                    raw_bytes, page_count, text = self._extract_pdf_text(document["source_url"])
+                    if not text.strip():
+                        failed_documents += 1
+                        continue
+
+                    sections = split_into_sections(text)
+                    if not sections:
+                        fallback_citation = Path(document["path"]).stem
+                        sections = [
+                            {
+                                "regulation_id": fallback_citation,
+                                "citation": fallback_citation,
+                                "title": document["title"],
+                                "part": "",
+                                "section_label": fallback_citation,
+                                "page_ref": "",
+                                "table_ref": "",
+                                "text": text,
+                            }
+                        ]
+
+                    document_id = self._canonical_store.upsert_document(
+                        source_file=document["path"],
+                        source_url=document["source_url"],
+                        title=document["title"],
+                        regulation_type=document.get("type", "UNKNOWN"),
+                        raw_bytes=raw_bytes,
+                        page_count=page_count,
+                    )
+
+                    persisted_sections = self._canonical_store.replace_sections(
+                        document_id,
+                        [
+                            {
+                                **section,
+                                "source_file": document["path"],
+                                "source_url": document["source_url"],
+                                "regulation_type": document.get("type", "UNKNOWN"),
+                            }
+                            for section in sections
+                        ],
+                    )
+
+                    ids: list[str] = []
+                    doc_chunks: list[str] = []
+                    metadatas: list[dict[str, Any]] = []
+
+                    for section_index, section in enumerate(persisted_sections):
+                        chunks = list(
+                            chunk_words(
+                                section["text"],
+                                chunk_size=self._settings.chunk_size_words,
+                                overlap=self._settings.chunk_overlap_words,
+                            )
+                        )
+                        for chunk_index, chunk in enumerate(chunks):
+                            ids.append(f"{section['section_id']}::{chunk_index}")
+                            doc_chunks.append(chunk)
+                            metadatas.append(
+                                {
+                                    "section_id": section["section_id"],
+                                    "citation": section["citation"],
+                                    "section_index": section_index,
+                                    "chunk_index": chunk_index,
+                                }
+                            )
+                except Exception as exc:
+                    print(f"Skipping document {document['path']}: {exc}")
                     failed_documents += 1
                     continue
 
-                sections = split_into_sections(text)
-                if not sections:
-                    fallback_citation = Path(document["path"]).stem
-                    sections = [
-                        {
-                            "regulation_id": fallback_citation,
-                            "citation": fallback_citation,
-                            "title": document["title"],
-                            "part": "",
-                            "text": text,
-                        }
-                    ]
-
-                ids: list[str] = []
-                doc_chunks: list[str] = []
-                metadatas: list[dict[str, Any]] = []
-
-                for section_index, section in enumerate(sections):
-                    chunks = list(
-                        chunk_words(
-                            section["text"],
-                            chunk_size=self._settings.chunk_size_words,
-                            overlap=self._settings.chunk_overlap_words,
-                        )
-                    )
-                    for chunk_index, chunk in enumerate(chunks):
-                        ids.append(f"{document['path']}::{section_index}::{chunk_index}")
-                        doc_chunks.append(chunk)
-                        metadatas.append(
-                            {
-                                "regulation_id": section["regulation_id"],
-                                "citation": section["citation"],
-                                "title": section["title"],
-                                "part": section.get("part", ""),
-                                "regulation_type": document.get("type", "UNKNOWN"),
-                                "source_file": document["path"],
-                                "source_url": document["source_url"],
-                                "section_index": section_index,
-                                "chunk_index": chunk_index,
-                            }
-                        )
-            except Exception as exc:
-                print(f"Skipping document {document['path']}: {exc}")
-                failed_documents += 1
-                continue
-
-            embeddings = self._embeddings.encode(doc_chunks, batch_size=self._settings.embedding_batch_size)
-            self._vector_store.upsert(ids=ids, embeddings=embeddings, documents=doc_chunks, metadatas=metadatas)
-            total_documents += 1
-            total_chunks += len(doc_chunks)
+                embeddings = self._embeddings.encode(doc_chunks, batch_size=self._settings.embedding_batch_size)
+                self._vector_store.upsert(ids=ids, embeddings=embeddings, documents=doc_chunks, metadatas=metadatas)
+                total_documents += 1
+                total_chunks += len(doc_chunks)
+        finally:
+            self._canonical_store.finish_run(
+                run_id,
+                status="completed" if failed_documents == 0 else "completed_with_errors",
+                documents_indexed=total_documents,
+                documents_failed=failed_documents,
+                chunks_indexed=total_chunks,
+            )
 
         return {
             "documents_indexed": total_documents,
@@ -116,21 +150,24 @@ class IndexerService:
         session.mount("https://", adapter)
         return session
 
-    def _extract_pdf_text(self, url: str) -> str:
+    def _extract_pdf_text(self, url: str) -> tuple[bytes, int, str]:
         response = self._session.get(url, timeout=self._settings.request_timeout_seconds)
         response.raise_for_status()
+        raw_bytes = response.content
 
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp_file:
             temp_path = Path(temp_file.name)
-            temp_file.write(response.content)
+            temp_file.write(raw_bytes)
 
         try:
             text_parts: list[str] = []
+            page_count = 0
             with pdfplumber.open(temp_path) as pdf:
+                page_count = len(pdf.pages)
                 for page in pdf.pages:
                     page_text = page.extract_text() or ""
                     if page_text.strip():
                         text_parts.append(page_text)
-            return "\n".join(text_parts)
+            return raw_bytes, page_count, "\n".join(text_parts)
         finally:
             temp_path.unlink(missing_ok=True)

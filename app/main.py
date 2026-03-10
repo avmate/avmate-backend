@@ -6,8 +6,10 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
+from app.db import init_db
 from app.dependencies import (
     get_catalog,
+    get_canonical_store,
     get_embedding_service,
     get_indexer_service,
     get_search_service,
@@ -30,6 +32,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup_event() -> None:
+    init_db()
     if settings.preload_model:
         thread = threading.Thread(target=get_embedding_service().load, daemon=True)
         thread.start()

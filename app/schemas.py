@@ -11,6 +11,7 @@ class SearchRequest(BaseModel):
 
 
 class ReferenceItem(BaseModel):
+    section_id: str
     regulation_id: str
     citation: str
     title: str
@@ -19,6 +20,8 @@ class ReferenceItem(BaseModel):
     source_url: str
     text: str
     part: str
+    page_ref: str
+    table_ref: str
     section_index: int
     chunk_index: int
     score: float
@@ -30,6 +33,7 @@ class SearchResponse(BaseModel):
     plain_english: str
     example: str
     study_questions: List[str]
+    study_answers: List[str]
     references: List[ReferenceItem]
     citations: List[str]
     verbatim_text: str

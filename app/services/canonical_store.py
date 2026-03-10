@@ -1,0 +1,138 @@
+from __future__ import annotations
+
+import hashlib
+from datetime import datetime
+
+from sqlalchemy import select, update
+
+from app.db import init_db, session_scope
+from app.models import Document, IngestionRun, RegulationSection
+
+
+class CanonicalStore:
+    def __init__(self) -> None:
+        init_db()
+
+    def begin_run(self, documents_seen: int) -> str:
+        with session_scope() as session:
+            run = IngestionRun(documents_seen=documents_seen)
+            session.add(run)
+            session.flush()
+            return run.id
+
+    def finish_run(
+        self,
+        run_id: str,
+        *,
+        status: str,
+        documents_indexed: int,
+        documents_failed: int,
+        chunks_indexed: int,
+        notes: str = "",
+    ) -> None:
+        with session_scope() as session:
+            run = session.get(IngestionRun, run_id)
+            if not run:
+                return
+            run.completed_at = datetime.utcnow()
+            run.status = status
+            run.documents_indexed = documents_indexed
+            run.documents_failed = documents_failed
+            run.chunks_indexed = chunks_indexed
+            run.notes = notes
+
+    def deactivate_all_documents(self) -> None:
+        with session_scope() as session:
+            session.execute(update(Document).values(is_active=False))
+
+    def upsert_document(
+        self,
+        *,
+        source_file: str,
+        source_url: str,
+        title: str,
+        regulation_type: str,
+        raw_bytes: bytes,
+        page_count: int,
+    ) -> str:
+        sha256 = hashlib.sha256(raw_bytes).hexdigest()
+        with session_scope() as session:
+            document = session.scalar(select(Document).where(Document.source_file == source_file))
+            if document is None:
+                document = Document(
+                    source_file=source_file,
+                    source_url=source_url,
+                    title=title,
+                    regulation_type=regulation_type,
+                    sha256=sha256,
+                    page_count=page_count,
+                    is_active=True,
+                    last_ingested_at=datetime.utcnow(),
+                )
+                session.add(document)
+            else:
+                document.source_url = source_url
+                document.title = title
+                document.regulation_type = regulation_type
+                document.sha256 = sha256
+                document.page_count = page_count
+                document.is_active = True
+                document.last_ingested_at = datetime.utcnow()
+            session.flush()
+            return document.id
+
+    def replace_sections(self, document_id: str, sections: list[dict]) -> list[dict]:
+        with session_scope() as session:
+            session.query(RegulationSection).filter(RegulationSection.document_id == document_id).delete()
+            persisted: list[dict] = []
+            for order_index, section in enumerate(sections):
+                row = RegulationSection(
+                    document_id=document_id,
+                    regulation_id=section["regulation_id"],
+                    citation=section["citation"],
+                    part=section.get("part", ""),
+                    section_label=section.get("section_label", ""),
+                    title=section["title"],
+                    text=section["text"],
+                    page_ref=section.get("page_ref", ""),
+                    table_ref=section.get("table_ref", ""),
+                    source_file=section["source_file"],
+                    source_url=section["source_url"],
+                    regulation_type=section["regulation_type"],
+                    section_order=order_index,
+                )
+                session.add(row)
+                session.flush()
+                persisted.append(
+                    {
+                        **section,
+                        "section_id": row.id,
+                        "section_order": order_index,
+                    }
+                )
+            return persisted
+
+    def get_sections_by_ids(self, section_ids: list[str]) -> list[dict]:
+        if not section_ids:
+            return []
+        with session_scope() as session:
+            rows = session.scalars(select(RegulationSection).where(RegulationSection.id.in_(section_ids))).all()
+            by_id = {
+                row.id: {
+                    "section_id": row.id,
+                    "regulation_id": row.regulation_id,
+                    "citation": row.citation,
+                    "part": row.part,
+                    "section_label": row.section_label,
+                    "title": row.title,
+                    "text": row.text,
+                    "page_ref": row.page_ref,
+                    "table_ref": row.table_ref,
+                    "source_file": row.source_file,
+                    "source_url": row.source_url,
+                    "regulation_type": row.regulation_type,
+                    "section_order": row.section_order,
+                }
+                for row in rows
+            }
+        return [by_id[section_id] for section_id in section_ids if section_id in by_id]

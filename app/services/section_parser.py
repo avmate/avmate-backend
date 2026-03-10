@@ -87,6 +87,16 @@ def derive_precise_title(section_text: str, citation: str) -> str:
     return first_line[:160]
 
 
+def extract_page_ref(section_text: str) -> str:
+    match = PAGE_PATTERN.search(section_text[:1000])
+    return match.group(0) if match else ""
+
+
+def extract_table_ref(section_text: str) -> str:
+    match = TABLE_PATTERN.search(section_text[:1000])
+    return match.group(0) if match else ""
+
+
 def split_into_sections(text: str) -> list[dict]:
     matches = list(SECTION_PATTERN.finditer(text))
     if not matches:
@@ -105,6 +115,9 @@ def split_into_sections(text: str) -> list[dict]:
                 "citation": citation,
                 "title": title,
                 "part": infer_part(citation),
+                "section_label": citation,
+                "page_ref": extract_page_ref(section_text),
+                "table_ref": extract_table_ref(section_text),
                 "text": section_text,
             }
         )
