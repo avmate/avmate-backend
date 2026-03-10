@@ -48,6 +48,10 @@ STOP_WORDS = {
     "using",
 }
 
+PAGE_REF_PATTERN = re.compile(r"\b(?:GEN|ENR|AD|AIP)\s+\d+(?:\.\d+)?\s*-\s*\d+\b", re.IGNORECASE)
+TABLE_REF_PATTERN = re.compile(r"\bTable\s+\d+(?:\.\d+)+\b", re.IGNORECASE)
+SUBSECTION_PATTERN = re.compile(r"\b(\d+(?:\.\d+)+)\b")
+
 
 class SearchService:
     def __init__(self, embeddings: EmbeddingService, vector_store: VectorStore, canonical_store: CanonicalStore) -> None:
@@ -82,27 +86,36 @@ class SearchService:
             semantic_score = max(0.0, min(1.0, 1.0 - distance))
             section_id = metadata.get("section_id", "")
             canonical = canonical_sections.get(section_id, {})
-            citation = canonical.get("citation", metadata.get("citation", "Unknown"))
+            raw_citation = str(canonical.get("citation", metadata.get("citation", "Unknown")) or "Unknown")
             canonical_text = canonical.get("text", document)
+            page_ref = canonical.get("page_ref", "") or self._infer_page_ref(canonical_text, raw_citation)
+            table_ref = canonical.get("table_ref", "") or self._infer_table_ref(canonical_text)
+            citation = self._format_output_citation(
+                raw_citation,
+                str(canonical.get("regulation_type", "UNKNOWN") or "UNKNOWN"),
+                page_ref,
+                table_ref,
+                canonical_text,
+            )
             combined_score, passes_gate = self._combine_score(
                 query_profile=query_profile,
                 document=canonical_text,
-                citation=citation,
+                citation=raw_citation,
                 semantic_score=semantic_score,
                 requested_citations=requested_citations,
             )
             reference = ReferenceItem(
                 section_id=section_id,
-                regulation_id=canonical.get("regulation_id", citation),
+                regulation_id=canonical.get("regulation_id", raw_citation),
                 citation=citation,
-                title=self._refine_title(canonical.get("title", "Untitled"), citation, canonical_text),
-                regulation_type=canonical.get("regulation_type", "UNKNOWN"),
+                title=self._refine_title(canonical.get("title", "Untitled"), raw_citation, canonical_text),
+                regulation_type=str(canonical.get("regulation_type", "UNKNOWN") or "UNKNOWN"),
                 source_file=canonical.get("source_file", ""),
                 source_url=canonical.get("source_url", ""),
                 text=canonical_text,
                 part=canonical.get("part", ""),
-                page_ref=canonical.get("page_ref", ""),
-                table_ref=canonical.get("table_ref", ""),
+                page_ref=page_ref,
+                table_ref=table_ref,
                 section_index=int(metadata.get("section_index", 0)),
                 chunk_index=int(metadata.get("chunk_index", 0)),
                 score=round(combined_score, 4),
@@ -115,6 +128,7 @@ class SearchService:
             ranked_items = self._rescue_ranked_items(fallback_semantic_items, query_profile, requested_citations)
 
         references = self._dedupe_references(ranked_items, top_k)
+        references = self._filter_final_references(references, query_profile, top_k)
 
         if not references:
             return SearchResponse(
@@ -284,15 +298,13 @@ class SearchService:
             category = category_match.group(1).upper()
             radius_value = self._extract_circling_radius(flattened, category)
             if radius_value:
-                page = f" ({top_reference.page_ref})" if top_reference.page_ref else ""
                 return (
                     f"For Category {category} aircraft, the circling area radius is {radius_value} at 0 ft aerodrome elevation "
-                    f"in {top_reference.citation}{page}. Higher aerodrome elevations increase the radius."
+                    f"in {top_reference.citation}. Higher aerodrome elevations increase the radius."
                 )
 
         sentence = self._extract_operational_sentence(flattened)
-        page = f" ({top_reference.page_ref})" if top_reference.page_ref else ""
-        return f"{top_reference.citation}{page}: {sentence}"
+        return f"{top_reference.citation}: {sentence}"
 
     def _build_legal_explanation(self, query: str, references: list[ReferenceItem]) -> str:
         lead = references[0]
@@ -345,6 +357,51 @@ class SearchService:
                 break
         return references
 
+    def _filter_final_references(
+        self,
+        references: list[ReferenceItem],
+        query_profile: dict,
+        top_k: int,
+    ) -> list[ReferenceItem]:
+        if not references:
+            return []
+
+        top = references[0]
+        filtered: list[ReferenceItem] = [top]
+        score_floor = max(0.55, top.score * 0.72)
+
+        for item in references[1:]:
+            if item.score < score_floor:
+                continue
+            if not self._is_reference_relevant(item, query_profile):
+                continue
+            filtered.append(item)
+            if len(filtered) >= top_k:
+                break
+        return filtered
+
+    def _is_reference_relevant(self, item: ReferenceItem, query_profile: dict) -> bool:
+        text = f"{item.citation} {item.title} {item.text}".lower()
+        required_patterns = query_profile.get("required_patterns", [])
+        intent_tokens = query_profile.get("intent_tokens", [])
+        terms = query_profile.get("terms", [])
+
+        if required_patterns and not all(pattern.search(text) for pattern in required_patterns):
+            return False
+
+        if intent_tokens:
+            hits = sum(1 for token in intent_tokens if token in text)
+            if hits == 0:
+                return False
+
+        key_terms = [term for term in terms if term not in {"aircraft", "pilot", "flight", "category", "cat"}]
+        if key_terms:
+            overlap = sum(1 for term in key_terms if term in text)
+            if overlap == 0:
+                return False
+
+        return True
+
     def _extract_circling_radius(self, text: str, category: str) -> str:
         table_match = re.search(
             r"\b0FT\s+1000FT\s+([0-9.]+NM)\s+([0-9.]+NM)\s+([0-9.]+NM)\s+([0-9.]+NM)\b",
@@ -356,6 +413,61 @@ class SearchService:
             if category_index:
                 return table_match.group(category_index)
         return ""
+
+    def _infer_page_ref(self, text: str, citation: str = "") -> str:
+        scan = text[:12000]
+        matches = list(PAGE_REF_PATTERN.finditer(scan))
+        if not matches:
+            return ""
+        subsection = self._infer_subsection(citation, scan)
+        if subsection:
+            subsection_match = re.search(rf"\b{re.escape(subsection)}\b", scan)
+            if subsection_match:
+                preceding = [m for m in matches if m.start() <= subsection_match.start()]
+                if preceding:
+                    return " ".join(preceding[-1].group(0).split())
+        return " ".join(matches[0].group(0).split())
+
+    def _infer_table_ref(self, text: str) -> str:
+        match = TABLE_REF_PATTERN.search(text[:12000])
+        return " ".join(match.group(0).split()) if match else ""
+
+    def _infer_subsection(self, citation: str, text: str) -> str:
+        citation_match = re.search(r"\bAIP\s+(\d+(?:\.\d+)+)\b", citation, re.IGNORECASE)
+        if citation_match:
+            return citation_match.group(1)
+        text_match = SUBSECTION_PATTERN.search(text[:800])
+        if text_match:
+            return text_match.group(1)
+        return ""
+
+    def _format_output_citation(
+        self,
+        citation: str,
+        regulation_type: str,
+        page_ref: str,
+        table_ref: str,
+        text: str,
+    ) -> str:
+        normalized = " ".join((citation or "").split()) or "Unknown"
+        if str(regulation_type or "").upper() != "AIP":
+            return normalized
+
+        subsection = self._infer_subsection(normalized, text)
+        parts: list[str] = []
+        if page_ref:
+            parts.append(f"AIP {page_ref}")
+        else:
+            parts.append("AIP")
+        if subsection:
+            parts.append(f"subsection {subsection}")
+        elif normalized.upper().startswith("AIP "):
+            parts.append(normalized[4:])
+
+        out = " ".join(parts).strip()
+        if table_ref:
+            out = f"{out}. {table_ref}"
+        return out
 
     def _extract_operational_sentence(self, text: str) -> str:
         candidates = [segment.strip() for segment in re.split(r"(?<=[.!?])\s+", text) if segment.strip()]
