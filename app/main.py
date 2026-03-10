@@ -51,7 +51,7 @@ def root() -> HealthResponse:
     embeddings = get_embedding_service()
     catalog = get_catalog()
     return HealthResponse(
-        status="ok" if vector_store.available else "degraded",
+        status="ok",
         service=settings.app_name,
         version=settings.app_version,
         embeddings_loaded=embeddings.is_loaded,

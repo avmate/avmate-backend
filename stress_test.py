@@ -13,8 +13,9 @@ import requests
 import time
 import json
 import threading
+import os
 
-BASE_URL = "https://avmate-backend-production.up.railway.app"
+BASE_URL = os.getenv("AVMATE_BASE_URL", "https://avmate-backend-production.up.railway.app")
 
 PASS = "\033[92m[PASS]\033[0m"
 FAIL = "\033[91m[FAIL]\033[0m"
