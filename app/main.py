@@ -51,7 +51,7 @@ def root() -> HealthResponse:
     embeddings = get_embedding_service()
     catalog = get_catalog()
     return HealthResponse(
-        status="ok",
+        status="ok" if vector_store.available else "degraded",
         service=settings.app_name,
         version=settings.app_version,
         embeddings_loaded=embeddings.is_loaded,
@@ -73,7 +73,13 @@ def search(
     query = payload.query.strip()
     if not query:
         raise HTTPException(status_code=422, detail="Query must not be empty.")
-    if get_vector_store().count() == 0:
+    vector_store = get_vector_store()
+    if not vector_store.available:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Vector store unavailable: {vector_store.error}. Delete chroma_db and rebuild the index.",
+        )
+    if vector_store.count() == 0:
         raise HTTPException(
             status_code=503,
             detail="Regulation index is empty. Run the indexing command before using search.",
