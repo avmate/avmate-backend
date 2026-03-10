@@ -5,13 +5,25 @@ from typing import Iterable
 
 
 SECTION_PATTERN = re.compile(
-    r"(?P<citation>(?:CASR|CAR|CAO|AIP|MOS|CAA)\s+(?:Part\s+)?[0-9A-Za-z.\-]+(?:\([0-9A-Za-z]+\))*)",
+    r"(?P<citation>"
+    r"(?:CASR|CAR|CAO|MOS|CAA)\s+(?:Part\s+)?[0-9A-Za-z.\-]+(?:\([0-9A-Za-z]+\))*"
+    r"|CAO\s+DOC\s+[0-9A-Za-z.\-]+"
+    r"|AIP\s+Australia\s+\d+(?:\.\d+)+"
+    r"|AIP\s+\d+(?:\.\d+)+"
+    r")",
     re.IGNORECASE,
 )
 CITATION_QUERY_PATTERN = re.compile(
-    r"\b(?:CASR|CAR|CAO|AIP|MOS|CAA)\s+(?:Part\s+)?[0-9A-Za-z.\-]+(?:\([0-9A-Za-z]+\))*",
+    r"\b("
+    r"(?:CASR|CAR|CAO|MOS|CAA)\s+(?:Part\s+)?[0-9A-Za-z.\-]+(?:\([0-9A-Za-z]+\))*"
+    r"|CAO\s+DOC\s+[0-9A-Za-z.\-]+"
+    r"|AIP\s+Australia\s+\d+(?:\.\d+)+"
+    r"|AIP\s+\d+(?:\.\d+)+"
+    r")",
     re.IGNORECASE,
 )
+TABLE_PATTERN = re.compile(r"\bTable\s+\d+(?:\.\d+)+\b", re.IGNORECASE)
+PAGE_PATTERN = re.compile(r"\b(?:GEN|ENR|AD|AIP)\s+\d+(?:\.\d+)?\s*-\s*\d+\b", re.IGNORECASE)
 
 
 def extract_citations(text: str) -> list[str]:
@@ -28,6 +40,53 @@ def infer_part(citation: str) -> str:
     return match.group(1) if match else ""
 
 
+def normalize_citation(raw: str) -> str:
+    citation = " ".join(raw.split())
+    citation = re.sub(r"^AIP Australia\s+", "AIP ", citation, flags=re.IGNORECASE)
+    citation = re.sub(r"\s+", " ", citation).strip()
+    return citation
+
+
+def derive_precise_citation(section_text: str, fallback: str) -> str:
+    leading_text = " ".join(section_text.split())[:250]
+
+    aip_match = re.search(r"\bAIP\s+Australia\s+(\d+(?:\.\d+)+)\b", leading_text, re.IGNORECASE)
+    if aip_match:
+        return f"AIP {aip_match.group(1)}"
+
+    generic_aip_match = re.search(r"\bAIP\s+(\d+(?:\.\d+)+)\b", leading_text, re.IGNORECASE)
+    if generic_aip_match:
+        return f"AIP {generic_aip_match.group(1)}"
+
+    cao_doc_match = re.search(r"\bCAO\s+DOC\s+([0-9A-Za-z.\-]+)\b", leading_text, re.IGNORECASE)
+    if cao_doc_match:
+        return f"CAO DOC {cao_doc_match.group(1)}"
+
+    normalized = normalize_citation(fallback)
+    if re.search(r"\d", normalized):
+        return normalized
+
+    page_match = PAGE_PATTERN.search(section_text[:500])
+    table_match = TABLE_PATTERN.search(section_text[:500])
+    if page_match and table_match:
+        return f"{normalized} {page_match.group(0)} {table_match.group(0)}".strip()
+    if page_match:
+        return f"{normalized} {page_match.group(0)}".strip()
+    if table_match:
+        return f"{normalized} {table_match.group(0)}".strip()
+    return normalized
+
+
+def derive_precise_title(section_text: str, citation: str) -> str:
+    first_line = next((line.strip() for line in section_text.splitlines() if line.strip()), citation)
+    first_line = re.sub(r"\s+", " ", first_line)
+    if first_line.lower().startswith(citation.lower()):
+        remainder = first_line[len(citation) :].strip(" .:-")
+        if remainder:
+            return f"{citation} {remainder}"[:160]
+    return first_line[:160]
+
+
 def split_into_sections(text: str) -> list[dict]:
     matches = list(SECTION_PATTERN.finditer(text))
     if not matches:
@@ -38,8 +97,8 @@ def split_into_sections(text: str) -> list[dict]:
         start = match.start()
         end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
         section_text = text[start:end].strip()
-        citation = " ".join(match.group("citation").split())
-        title = section_text.splitlines()[0][:160]
+        citation = derive_precise_citation(section_text, match.group("citation"))
+        title = derive_precise_title(section_text, citation)
         sections.append(
             {
                 "regulation_id": citation,
