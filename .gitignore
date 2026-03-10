@@ -11,3 +11,6 @@ chroma_db/
 
 # Temp files from indexer
 temp_*.pdf
+
+# Local virtual environment
+.venv/
