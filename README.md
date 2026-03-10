@@ -26,6 +26,7 @@ FastAPI backend for Australian aviation regulation search. The backend is struct
   - `R2_MANIFEST_URL` if you want the manifest hosted remotely
   - `PRELOAD_EMBEDDINGS=true` if you want the model loaded shortly after startup
   - `AUTO_INDEX_ON_STARTUP=true` if you want Railway to build the Chroma index in a background thread after boot
+  - `CORS_ALLOW_ORIGINS=https://beta.avmate.com.au,https://avmate.com.au,http://localhost:3000`
 
 ## Search behavior
 

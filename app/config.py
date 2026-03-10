@@ -16,6 +16,13 @@ def _as_bool(value: str | None, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _as_csv_list(value: str | None, default: list[str]) -> list[str]:
+    if value is None:
+        return default
+    items = [item.strip() for item in value.split(",") if item.strip()]
+    return items or default
+
+
 @dataclass(frozen=True)
 class Settings:
     app_name: str = os.getenv("APP_NAME", "AvMate API")
@@ -44,6 +51,10 @@ class Settings:
     chunk_overlap_words: int = int(os.getenv("CHUNK_OVERLAP_WORDS", "40"))
     embedding_batch_size: int = int(os.getenv("EMBEDDING_BATCH_SIZE", "32"))
     request_timeout_seconds: int = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "180"))
+    cors_allow_origins: list[str] = _as_csv_list(
+        os.getenv("CORS_ALLOW_ORIGINS"),
+        ["https://beta.avmate.com.au", "http://localhost:3000", "http://127.0.0.1:3000"],
+    )
     anthropic_api_key: str | None = os.getenv("ANTHROPIC_API_KEY")
     enable_llm_answers: bool = _as_bool(os.getenv("ENABLE_LLM_ANSWERS"), default=False)
 
