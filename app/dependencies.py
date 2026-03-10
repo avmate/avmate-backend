@@ -7,13 +7,17 @@ from app.services.embedding_service import EmbeddingService
 from app.services.indexer_service import IndexerService
 from app.services.r2_catalog import RegulationCatalog
 from app.services.search_service import SearchService
-from app.services.vector_store import VectorStore
+from app.services.vector_store import UnavailableVectorStore, VectorStore
 
 
 @lru_cache(maxsize=1)
-def get_vector_store() -> VectorStore:
+def get_vector_store() -> VectorStore | UnavailableVectorStore:
     settings = get_settings()
-    return VectorStore(settings.chroma_dir, settings.collection_name)
+    try:
+        return VectorStore(settings.chroma_dir, settings.collection_name)
+    except Exception as exc:
+        print(f"Vector store unavailable: {exc}")
+        return UnavailableVectorStore(exc)
 
 
 @lru_cache(maxsize=1)
@@ -40,4 +44,3 @@ def get_search_service() -> SearchService:
 def get_indexer_service() -> IndexerService:
     settings: Settings = get_settings()
     return IndexerService(settings, get_catalog(), get_embedding_service(), get_vector_store())
-

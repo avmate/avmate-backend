@@ -40,3 +40,42 @@ class VectorStore:
             n_results=top_k,
             include=["documents", "metadatas", "distances"],
         )
+
+    @property
+    def available(self) -> bool:
+        return True
+
+    @property
+    def error(self) -> str | None:
+        return None
+
+
+class UnavailableVectorStore:
+    def __init__(self, error: Exception) -> None:
+        self._error = str(error)
+
+    def count(self) -> int:
+        return 0
+
+    def reset(self) -> None:
+        raise RuntimeError(self._error)
+
+    def upsert(
+        self,
+        ids: list[str],
+        embeddings: list[list[float]],
+        documents: list[str],
+        metadatas: list[dict[str, Any]],
+    ) -> None:
+        raise RuntimeError(self._error)
+
+    def query(self, query_embeddings: list[list[float]], top_k: int) -> dict[str, Any]:
+        raise RuntimeError(self._error)
+
+    @property
+    def available(self) -> bool:
+        return False
+
+    @property
+    def error(self) -> str:
+        return self._error
