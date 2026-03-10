@@ -39,6 +39,7 @@ class SearchResponse(BaseModel):
     verbatim_text: str
     contextual_notes: List[str]
     confidence: int
+    request_id: str = ""
     explanation: Optional[str] = None
 
 
@@ -73,3 +74,15 @@ class HealthResponse(BaseModel):
     collection_count: int
     manifest_source: str
     vector_store_status: str
+    request_id: str = ""
+
+
+class ReadyResponse(BaseModel):
+    ready: bool
+    service: str
+    version: str
+    embeddings_loaded: bool
+    collection_count: int
+    vector_store_status: str
+    reason: str = ""
+    request_id: str = ""
