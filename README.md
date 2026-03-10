@@ -1,36 +1,40 @@
-# AvMate Backend Deployment Guide
-## Overview
-This is the FastAPI backend for AvMate, providing vector search on aviation regulations stored in ChromaDB.
+# AvMate Backend
 
-## Prerequisites
-- Python 3.8+
-- Anthropic API key (for AI explanations)
-- ChromaDB database (built via `index_new.py`)
+FastAPI backend for Australian aviation regulation search. The backend is structured around:
 
-## Local Setup
-1. Install dependencies: `pip install -r requirements.txt`
-2. Run indexer: `python index_new.py` (downloads PDFs from R2, builds DB)
-3. Set API key: `$env:ANTHROPIC_API_KEY = "your-key"`
-4. Run server: `py -m uvicorn server:app --reload`
+- `app.main`: lightweight API startup for Railway
+- `indexer.py`: explicit indexing command for R2-hosted PDFs
+- `data/regulations_manifest.json`: document manifest used to build the vector index
+- `chroma_db/`: local Chroma persistence directory
 
-## Deployment to Railway
-1. Push code to GitHub (this repo).
-2. Go to https://railway.app > New Project > Deploy from GitHub repo.
-3. Connect this repo.
-4. In Railway dashboard > Variables: Add `ANTHROPIC_API_KEY` with your key.
-5. Railway will build using the Dockerfile and deploy.
-6. Get the URL (e.g., `https://avmate-backend.up.railway.app`).
-7. Update your frontend to point to the Railway URL.
+## Local development
 
-## Troubleshooting
-- **AI Errors**: Ensure your Anthropic key is set in Railway Variables.
-- **No Results**: The indexer must run successfully during Docker build.
-- **CORS**: If frontend can't call backend, add CORS middleware in `server.py`:
-  ```python
-  from fastapi.middleware.cors import CORSMiddleware
-  app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"])
-  ```
+1. Install dependencies:
+   `pip install -r requirements.txt`
+2. Build the local index from R2:
+   `python indexer.py`
+3. Run the API:
+   `uvicorn app.main:app --reload`
 
-## Security
-- Never commit API keys to GitHub.
-- Use HTTPS in production.
+## Railway deployment
+
+- Use the included `Dockerfile`.
+- Railway should start `app.main:app`, not the legacy `server.py` logic.
+- Set the following variables as needed:
+  - `PORT`
+  - `R2_BASE_URL`
+  - `R2_MANIFEST_URL` if you want the manifest hosted remotely
+  - `PRELOAD_EMBEDDINGS=true` if you want the model loaded shortly after startup
+  - `AUTO_INDEX_ON_STARTUP=true` if you want Railway to build the Chroma index in a background thread after boot
+
+## Search behavior
+
+- `/health` remains lightweight and should stay responsive during cold starts.
+- `/search` returns a `503` if the index is empty instead of crashing the container.
+- Results are sourced from indexed regulation text and include citations, references, and study questions.
+
+## Indexing workflow
+
+The indexer downloads each PDF from R2, extracts text with `pdfplumber`, splits the text into regulation sections when possible, chunks those sections, embeds them with `sentence-transformers/all-MiniLM-L6-v2`, and upserts them into Chroma.
+
+Update `data/regulations_manifest.json` as you add new CASA source files or move to a hosted manifest in R2.
