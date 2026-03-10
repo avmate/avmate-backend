@@ -17,12 +17,7 @@ import requests
 import pdfplumber
 import chromadb
 from sentence_transformers import SentenceTransformer
-import pytesseract
-from pdf2image import convert_from_path
 from urllib.parse import quote
-
-# Set Tesseract path (adjust if installed elsewhere)
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 # R2 bucket URL
 R2_BASE_URL = "https://pub-a32237578ade418f9375e48bb3f1982a.r2.dev"
@@ -56,15 +51,17 @@ def extract_text_from_pdf(pdf_path):
     except Exception as e:
         print(f"pdfplumber failed for {pdf_path}: {e}")
     
-    if not text.strip():  # If no text, use OCR
-        print(f"No text found, using OCR for {pdf_path}")
+    if not text.strip():  # If no text, try OCR (only if system deps available)
+        print(f"No text found, attempting OCR for {pdf_path}")
         try:
+            import pytesseract
+            from pdf2image import convert_from_path
             images = convert_from_path(pdf_path)
             for image in images:
                 page_text = pytesseract.image_to_string(image)
                 text += page_text + "\n"
         except Exception as e:
-            print(f"OCR failed for {pdf_path}: {e}")
+            print(f"OCR not available or failed for {pdf_path}: {e}")
     
     return text
 
