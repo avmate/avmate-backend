@@ -1,8 +1,11 @@
 fastapi
-uvicorn
+uvicorn[standard]
 pydantic
-pdfplumber
 chromadb
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
 sentence-transformers
 anthropic
+pdfplumber
 requests
+numpy
