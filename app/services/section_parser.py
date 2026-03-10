@@ -26,6 +26,10 @@ TABLE_PATTERN = re.compile(r"\bTable\s+\d+(?:\.\d+)+\b", re.IGNORECASE)
 PAGE_PATTERN = re.compile(r"\b(?:GEN|ENR|AD|AIP)\s+\d+(?:\.\d+)?\s*-\s*\d+\b", re.IGNORECASE)
 
 
+def _normalize_ref(value: str) -> str:
+    return " ".join(value.split())
+
+
 def extract_citations(text: str) -> list[str]:
     citations: list[str] = []
     for match in CITATION_QUERY_PATTERN.finditer(text):
@@ -112,14 +116,25 @@ def derive_precise_title(section_text: str, citation: str) -> str:
     return first_line[:160]
 
 
-def extract_page_ref(section_text: str) -> str:
-    match = PAGE_PATTERN.search(section_text[:1000])
-    return match.group(0) if match else ""
+def extract_page_ref(section_text: str, full_text: str | None = None, section_start: int | None = None) -> str:
+    if full_text is not None and section_start is not None:
+        window_start = max(0, section_start - 8000)
+        window_end = min(len(full_text), section_start + 2400)
+        window_text = full_text[window_start:window_end]
+        markers = list(PAGE_PATTERN.finditer(window_text))
+        if markers:
+            preceding = [m for m in markers if (window_start + m.start()) <= section_start]
+            if preceding:
+                return _normalize_ref(preceding[-1].group(0))
+            return _normalize_ref(markers[0].group(0))
+
+    match = PAGE_PATTERN.search(section_text[:12000])
+    return _normalize_ref(match.group(0)) if match else ""
 
 
 def extract_table_ref(section_text: str) -> str:
-    match = TABLE_PATTERN.search(section_text[:1000])
-    return match.group(0) if match else ""
+    match = TABLE_PATTERN.search(section_text[:12000])
+    return _normalize_ref(match.group(0)) if match else ""
 
 
 def split_into_sections(text: str) -> list[dict]:
@@ -141,7 +156,7 @@ def split_into_sections(text: str) -> list[dict]:
                 "title": title,
                 "part": infer_part(citation),
                 "section_label": citation,
-                "page_ref": extract_page_ref(section_text),
+                "page_ref": extract_page_ref(section_text, full_text=text, section_start=start),
                 "table_ref": extract_table_ref(section_text),
                 "text": section_text,
             }
