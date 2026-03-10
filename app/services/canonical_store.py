@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import func, or_, select, update
 
 from app.db import init_db, session_scope
 from app.models import Document, IngestionRun, RegulationSection
@@ -117,22 +117,52 @@ class CanonicalStore:
             return []
         with session_scope() as session:
             rows = session.scalars(select(RegulationSection).where(RegulationSection.id.in_(section_ids))).all()
-            by_id = {
-                row.id: {
-                    "section_id": row.id,
-                    "regulation_id": row.regulation_id,
-                    "citation": row.citation,
-                    "part": row.part,
-                    "section_label": row.section_label,
-                    "title": row.title,
-                    "text": row.text,
-                    "page_ref": row.page_ref,
-                    "table_ref": row.table_ref,
-                    "source_file": row.source_file,
-                    "source_url": row.source_url,
-                    "regulation_type": row.regulation_type,
-                    "section_order": row.section_order,
-                }
-                for row in rows
-            }
+            by_id = {row.id: self._row_to_dict(row) for row in rows}
         return [by_id[section_id] for section_id in section_ids if section_id in by_id]
+
+    def search_sections_by_terms(
+        self,
+        terms: list[str],
+        *,
+        limit: int = 120,
+        regulation_type: str | None = None,
+    ) -> list[dict]:
+        normalized_terms = [term.strip().lower() for term in terms if len(term.strip()) >= 3]
+        if not normalized_terms:
+            return []
+
+        like_conditions = []
+        for term in normalized_terms:
+            pattern = f"%{term}%"
+            like_conditions.extend(
+                [
+                    func.lower(RegulationSection.text).like(pattern),
+                    func.lower(RegulationSection.title).like(pattern),
+                    func.lower(RegulationSection.citation).like(pattern),
+                ]
+            )
+
+        stmt = select(RegulationSection).where(or_(*like_conditions))
+        if regulation_type:
+            stmt = stmt.where(func.lower(RegulationSection.regulation_type) == regulation_type.lower())
+
+        with session_scope() as session:
+            rows = session.scalars(stmt.limit(limit)).all()
+        return [self._row_to_dict(row) for row in rows]
+
+    def _row_to_dict(self, row: RegulationSection) -> dict:
+        return {
+            "section_id": row.id,
+            "regulation_id": row.regulation_id,
+            "citation": row.citation,
+            "part": row.part,
+            "section_label": row.section_label,
+            "title": row.title,
+            "text": row.text,
+            "page_ref": row.page_ref,
+            "table_ref": row.table_ref,
+            "source_file": row.source_file,
+            "source_url": row.source_url,
+            "regulation_type": row.regulation_type,
+            "section_order": row.section_order,
+        }
