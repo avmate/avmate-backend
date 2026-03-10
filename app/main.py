@@ -21,6 +21,8 @@ from app.services.search_service import SearchService
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name, version=settings.app_version)
+_indexing_lock = threading.Lock()
+_indexing_in_progress = False
 
 app.add_middleware(
     CORSMiddleware,
@@ -37,15 +39,30 @@ def startup_event() -> None:
         thread = threading.Thread(target=get_embedding_service().load, daemon=True)
         thread.start()
     if settings.auto_index_on_startup and get_vector_store().count() == 0:
-        thread = threading.Thread(target=_run_background_index, daemon=True)
-        thread.start()
+        _ensure_background_index()
 
 
 def _run_background_index() -> None:
+    global _indexing_in_progress
     try:
-        get_indexer_service().rebuild_index()
+        result = get_indexer_service().rebuild_index()
+        print(f"Background indexing complete: {result}")
     except Exception as exc:
         print(f"Background indexing failed: {exc}")
+    finally:
+        with _indexing_lock:
+            _indexing_in_progress = False
+
+
+def _ensure_background_index() -> None:
+    global _indexing_in_progress
+    with _indexing_lock:
+        if _indexing_in_progress:
+            return
+        _indexing_in_progress = True
+    print("Background indexing started.")
+    thread = threading.Thread(target=_run_background_index, daemon=True)
+    thread.start()
 
 
 @app.get("/", response_model=HealthResponse)
@@ -53,6 +70,10 @@ def root() -> HealthResponse:
     vector_store = get_vector_store()
     embeddings = get_embedding_service()
     catalog = get_catalog()
+    if vector_store.available:
+        vector_status = "indexing" if _indexing_in_progress else "ready"
+    else:
+        vector_status = f"unavailable: {vector_store.error}"
     return HealthResponse(
         status="ok",
         service=settings.app_name,
@@ -60,7 +81,7 @@ def root() -> HealthResponse:
         embeddings_loaded=embeddings.is_loaded,
         collection_count=vector_store.count(),
         manifest_source=catalog.source_label(),
-        vector_store_status="ready" if vector_store.available else f"unavailable: {vector_store.error}",
+        vector_store_status=vector_status,
     )
 
 
@@ -84,9 +105,14 @@ def search(
             detail=f"Vector store unavailable: {vector_store.error}. Delete chroma_db and rebuild the index.",
         )
     if vector_store.count() == 0:
+        if settings.auto_index_on_startup:
+            _ensure_background_index()
+            detail = "Regulation index build in progress. Retry in 30-120 seconds."
+        else:
+            detail = "Regulation index is empty. Run the indexing command before using search."
         raise HTTPException(
             status_code=503,
-            detail="Regulation index is empty. Run the indexing command before using search.",
+            detail=detail,
         )
     embeddings = get_embedding_service()
     if not embeddings.is_loaded:
