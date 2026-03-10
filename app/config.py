@@ -51,6 +51,9 @@ class Settings:
     chunk_overlap_words: int = int(os.getenv("CHUNK_OVERLAP_WORDS", "40"))
     embedding_batch_size: int = int(os.getenv("EMBEDDING_BATCH_SIZE", "32"))
     request_timeout_seconds: int = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "180"))
+    rate_limit_enabled: bool = _as_bool(os.getenv("RATE_LIMIT_ENABLED"), default=True)
+    rate_limit_requests: int = int(os.getenv("RATE_LIMIT_REQUESTS", "120"))
+    rate_limit_window_seconds: int = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
     cors_allow_origins: list[str] = field(
         default_factory=lambda: _as_csv_list(
             os.getenv("CORS_ALLOW_ORIGINS"),

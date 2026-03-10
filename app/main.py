@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import threading
+import time
+from uuid import uuid4
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
@@ -15,7 +17,8 @@ from app.dependencies import (
     get_search_service,
     get_vector_store,
 )
-from app.schemas import HealthResponse, SearchRequest, SearchResponse
+from app.schemas import HealthResponse, ReadyResponse, SearchRequest, SearchResponse
+from app.services.rate_limiter import SlidingWindowRateLimiter
 from app.services.search_service import SearchService
 
 
@@ -23,6 +26,14 @@ settings = get_settings()
 app = FastAPI(title=settings.app_name, version=settings.app_version)
 _indexing_lock = threading.Lock()
 _indexing_in_progress = False
+_rate_limiter = (
+    SlidingWindowRateLimiter(
+        max_requests=settings.rate_limit_requests,
+        window_seconds=settings.rate_limit_window_seconds,
+    )
+    if settings.rate_limit_enabled
+    else None
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,6 +41,26 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def request_context_middleware(request: Request, call_next):
+    request_id = request.headers.get("x-request-id") or str(uuid4())
+    request.state.request_id = request_id
+    start = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        duration_ms = round((time.perf_counter() - start) * 1000, 2)
+        print(f"request_id={request_id} method={request.method} path={request.url.path} error={exc} duration_ms={duration_ms}")
+        raise
+    duration_ms = round((time.perf_counter() - start) * 1000, 2)
+    response.headers["X-Request-ID"] = request_id
+    print(
+        f"request_id={request_id} method={request.method} path={request.url.path} "
+        f"status={response.status_code} duration_ms={duration_ms}"
+    )
+    return response
 
 
 @app.on_event("startup")
@@ -65,8 +96,20 @@ def _ensure_background_index() -> None:
     thread.start()
 
 
-@app.get("/", response_model=HealthResponse)
-def root() -> HealthResponse:
+def _request_id(request: Request) -> str:
+    return getattr(request.state, "request_id", "")
+
+
+def _client_key(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+def _build_health_response(request_id: str) -> HealthResponse:
     vector_store = get_vector_store()
     embeddings = get_embedding_service()
     catalog = get_catalog()
@@ -82,27 +125,81 @@ def root() -> HealthResponse:
         collection_count=vector_store.count(),
         manifest_source=catalog.source_label(),
         vector_store_status=vector_status,
+        request_id=request_id,
     )
 
 
+@app.get("/", response_model=HealthResponse)
+def root(request: Request) -> HealthResponse:
+    return _build_health_response(_request_id(request))
+
+
 @app.get("/health", response_model=HealthResponse)
-def health() -> HealthResponse:
-    return root()
+def health(request: Request) -> HealthResponse:
+    return _build_health_response(_request_id(request))
+
+
+@app.get("/ready", response_model=ReadyResponse)
+def ready(request: Request, response: Response) -> ReadyResponse:
+    vector_store = get_vector_store()
+    embeddings = get_embedding_service()
+    if not embeddings.is_loaded:
+        embeddings.ensure_loading()
+    collection_count = vector_store.count() if vector_store.available else 0
+    ready_state = vector_store.available and collection_count > 0 and embeddings.is_loaded
+    if ready_state:
+        reason = "ready"
+        vector_status = "ready"
+        response.status_code = 200
+    else:
+        if not vector_store.available:
+            reason = f"vector_store_unavailable: {vector_store.error}"
+            vector_status = "unavailable"
+        elif collection_count == 0 and _indexing_in_progress:
+            reason = "indexing_in_progress"
+            vector_status = "indexing"
+        elif collection_count == 0:
+            reason = "index_empty"
+            vector_status = "empty"
+        else:
+            reason = "embedding_warmup"
+            vector_status = "warming"
+        response.status_code = 503
+    return ReadyResponse(
+        ready=ready_state,
+        service=settings.app_name,
+        version=settings.app_version,
+        embeddings_loaded=embeddings.is_loaded,
+        collection_count=collection_count,
+        vector_store_status=vector_status,
+        reason=reason,
+        request_id=_request_id(request),
+    )
 
 
 @app.post("/search", response_model=SearchResponse)
 def search(
+    request: Request,
     payload: SearchRequest,
     search_service: SearchService = Depends(get_search_service),
 ) -> SearchResponse:
+    request_id = _request_id(request)
+    if _rate_limiter is not None:
+        allowed, retry_after = _rate_limiter.allow(_client_key(request))
+        if not allowed:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Rate limit exceeded. Retry in {retry_after} seconds. request_id={request_id}",
+                headers={"Retry-After": str(retry_after)},
+            )
     query = payload.query.strip()
     if not query:
-        raise HTTPException(status_code=422, detail="Query must not be empty.")
+        raise HTTPException(status_code=422, detail=f"Query must not be empty. request_id={request_id}")
     vector_store = get_vector_store()
     if not vector_store.available:
         raise HTTPException(
             status_code=503,
-            detail=f"Vector store unavailable: {vector_store.error}. Delete chroma_db and rebuild the index.",
+            detail=f"Vector store unavailable: {vector_store.error}. Delete chroma_db and rebuild the index. request_id={request_id}",
         )
     if vector_store.count() == 0:
         if settings.auto_index_on_startup:
@@ -112,7 +209,7 @@ def search(
             detail = "Regulation index is empty. Run the indexing command before using search."
         raise HTTPException(
             status_code=503,
-            detail=detail,
+            detail=f"{detail} request_id={request_id}",
         )
     embeddings = get_embedding_service()
     if not embeddings.is_loaded:
@@ -120,8 +217,9 @@ def search(
         detail = "Embedding model is warming up. Retry the search in a few seconds."
         if embeddings.load_error:
             detail = f"Embedding model failed to load: {embeddings.load_error}"
-        raise HTTPException(status_code=503, detail=detail)
+        raise HTTPException(status_code=503, detail=f"{detail} request_id={request_id}")
     try:
-        return search_service.search(query, payload.top_k)
+        result = search_service.search(query, payload.top_k)
+        return result.model_copy(update={"request_id": request_id})
     except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Search unavailable: {exc}") from exc
+        raise HTTPException(status_code=503, detail=f"Search unavailable: {exc}. request_id={request_id}") from exc

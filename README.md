@@ -27,12 +27,17 @@ FastAPI backend for Australian aviation regulation search. The backend is struct
   - `PRELOAD_EMBEDDINGS=true` if you want the model loaded shortly after startup
   - `AUTO_INDEX_ON_STARTUP=true` if you want Railway to build the Chroma index in a background thread after boot
   - `CORS_ALLOW_ORIGINS=https://beta.avmate.com.au,https://avmate.com.au,http://localhost:3000`
+  - `RATE_LIMIT_ENABLED=true`
+  - `RATE_LIMIT_REQUESTS=120`
+  - `RATE_LIMIT_WINDOW_SECONDS=60`
 
 ## Search behavior
 
 - `/health` remains lightweight and should stay responsive during cold starts.
+- `/ready` returns `200` only when the service is ready to answer search requests.
 - `/search` returns a `503` if the index is empty instead of crashing the container.
 - Results are sourced from indexed regulation text and include citations, references, and study questions.
+- `X-Request-ID` is returned on API responses for easier tracing in logs.
 
 ## Indexing workflow
 
