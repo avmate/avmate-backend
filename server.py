@@ -130,8 +130,3 @@ Provide a JSON response with keys: answer, plain_english, example, study, source
             "sources": "\n".join(sources),
             "confidence": random.randint(90, 99)
         }
-import os
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("server:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
