@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING, Any
 
 from app.schemas import ReferenceItem, SearchResponse
 from app.services.canonical_store import CanonicalStore
 from app.services.embedding_service import EmbeddingService
 from app.services.section_parser import extract_citations
 from app.services.vector_store import VectorStore
+
+if TYPE_CHECKING:
+    from app.services.llm_answer_service import LLMAnswerService
 
 
 STOP_WORDS = {
@@ -63,17 +67,29 @@ CIRCLING_ROW_PATTERN = re.compile(
 
 
 class SearchService:
-    def __init__(self, embeddings: EmbeddingService, vector_store: VectorStore, canonical_store: CanonicalStore) -> None:
+    def __init__(
+        self,
+        embeddings: EmbeddingService,
+        vector_store: VectorStore,
+        canonical_store: CanonicalStore,
+        llm_answer_service: "LLMAnswerService | None" = None,
+        enable_llm_answers: bool = False,
+    ) -> None:
         self._embeddings = embeddings
         self._vector_store = vector_store
         self._canonical_store = canonical_store
+        self._llm_answer_service = llm_answer_service
+        self._enable_llm_answers = enable_llm_answers
 
-    def search(self, query: str, top_k: int) -> SearchResponse:
+    def search(self, query: str, top_k: int, use_llm: bool = True) -> SearchResponse:
+        query_profile = self._build_query_profile(query)
         query_embedding = self._embeddings.encode([query])
-        candidate_k = min(max(top_k * 8, 24), 60)
+        if query_profile.get("strict_single_reference"):
+            candidate_k = min(max(top_k * 24, 140), 260)
+        else:
+            candidate_k = min(max(top_k * 8, 24), 80)
         results = self._vector_store.query(query_embeddings=query_embedding, top_k=candidate_k)
         requested_citations = [citation.lower() for citation in extract_citations(query)]
-        query_profile = self._build_query_profile(query)
 
         documents = (results.get("documents") or [[]])[0]
         metadatas = (results.get("metadatas") or [[]])[0]
@@ -188,6 +204,33 @@ class SearchService:
                 if circling.get("radius_nm"):
                     confidence = max(confidence, 74)
 
+        deterministic_payload: dict[str, Any] = {
+            "answer": answer,
+            "legal_explanation": legal_explanation,
+            "plain_english": plain_english,
+            "example": example,
+            "study_questions": study_questions,
+            "study_answers": study_answers,
+        }
+        if use_llm and self._enable_llm_answers and self._llm_answer_service and self._llm_answer_service.enabled:
+            try:
+                llm_output = self._llm_answer_service.generate(
+                    query=query,
+                    references=references,
+                    fallback_payload=deterministic_payload,
+                )
+            except Exception as exc:
+                llm_output = None
+                contextual_notes.append(f"Grounded LLM synthesis unavailable: {exc}")
+            if llm_output:
+                answer = llm_output.get("answer", answer)
+                legal_explanation = llm_output.get("legal_explanation", legal_explanation)
+                plain_english = llm_output.get("plain_english", plain_english)
+                example = llm_output.get("example", example)
+                study_questions = llm_output.get("study_questions", study_questions)
+                study_answers = llm_output.get("study_answers", study_answers)
+                contextual_notes.append("Grounded LLM synthesis enabled using only retrieved references.")
+
         return SearchResponse(
             answer=answer,
             legal_explanation=legal_explanation,
@@ -269,6 +312,7 @@ class SearchService:
         required_patterns = query_profile["required_patterns"]
         intent_tokens = query_profile["intent_tokens"]
         numeric_intent = bool(query_profile.get("numeric_intent"))
+        strict_single_reference = bool(query_profile.get("strict_single_reference"))
 
         citation_lower = citation.lower()
         document_lower = document.lower()
@@ -281,6 +325,18 @@ class SearchService:
         phrase_hits = sum(1 for phrase in phrases if phrase in document_lower)
         required_ok = all(pattern.search(document) or pattern.search(citation) for pattern in required_patterns)
         numeric_evidence = bool(re.search(r"\b\d+(?:\.\d+)?\s*(?:nm|ft|m|kts|kt)\b", document_lower))
+        circling_table_evidence = bool(
+            re.search(r"\bad\s+circling\b", document_lower)
+            and re.search(r"\bcat\s+a\b", document_lower)
+            and re.search(r"\bcat\s+b\b", document_lower)
+            and re.search(r"\bcat\s+c\b", document_lower)
+            and re.search(r"\bcat\s+d\b", document_lower)
+            and (
+                re.search(r"\b0\s*ft\s+1000\s*ft\b", document_lower)
+                or re.search(r"\btable\s+1\.1\b", document_lower)
+                or re.search(r"\b0ft\s+1000ft\b", document_lower)
+            )
+        )
 
         passes_gate = citation_exact or citation_mentioned
         if not passes_gate:
@@ -288,6 +344,8 @@ class SearchService:
             if required_patterns and not required_ok:
                 passes_gate = False
             if numeric_intent and not numeric_evidence and semantic_score < 0.72:
+                passes_gate = False
+            if strict_single_reference and not circling_table_evidence and semantic_score < 0.8:
                 passes_gate = False
 
         score = semantic_score * 0.62
@@ -309,6 +367,10 @@ class SearchService:
             score += 0.05
         if numeric_intent:
             score += 0.06 if numeric_evidence else -0.08
+        if circling_table_evidence:
+            score += 0.24
+        if strict_single_reference and not circling_table_evidence:
+            score -= 0.15
 
         return max(0.0, min(1.0, score)), passes_gate
 
