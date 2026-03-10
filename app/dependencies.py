@@ -8,6 +8,7 @@ from app.services.embedding_service import EmbeddingService
 from app.services.indexer_service import IndexerService
 from app.services.r2_catalog import RegulationCatalog
 from app.services.search_service import SearchService
+from app.services.study_guide_service import StudyGuideService
 from app.services.vector_store import UnavailableVectorStore, VectorStore
 
 
@@ -55,3 +56,8 @@ def get_indexer_service() -> IndexerService:
         get_vector_store(),
         get_canonical_store(),
     )
+
+
+def get_study_guide_service() -> StudyGuideService:
+    settings = get_settings()
+    return StudyGuideService(get_search_service(), timeout_seconds=settings.request_timeout_seconds)

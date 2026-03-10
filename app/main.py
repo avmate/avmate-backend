@@ -13,10 +13,12 @@ from app.dependencies import (
     get_embedding_service,
     get_indexer_service,
     get_search_service,
+    get_study_guide_service,
     get_vector_store,
 )
-from app.schemas import HealthResponse, SearchRequest, SearchResponse
+from app.schemas import HealthResponse, SearchRequest, SearchResponse, StudyGuideRequest, StudyGuideResponse
 from app.services.search_service import SearchService
+from app.services.study_guide_service import StudyGuideService
 
 
 settings = get_settings()
@@ -99,3 +101,17 @@ def search(
         return search_service.search(query, payload.top_k)
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Search unavailable: {exc}") from exc
+
+
+@app.post("/study-guide", response_model=StudyGuideResponse)
+def study_guide(
+    payload: StudyGuideRequest,
+    study_service: StudyGuideService = Depends(get_study_guide_service),
+) -> StudyGuideResponse:
+    test_name = payload.test_name.strip()
+    if not test_name:
+        raise HTTPException(status_code=422, detail="test_name must not be empty.")
+    try:
+        return study_service.build_study_guide(test_name=test_name, max_items=payload.max_items)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Study guide unavailable: {exc}") from exc

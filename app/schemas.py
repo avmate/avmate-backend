@@ -42,6 +42,29 @@ class SearchResponse(BaseModel):
     explanation: Optional[str] = None
 
 
+class StudyGuideRequest(BaseModel):
+    test_name: str = Field(..., min_length=3, max_length=200)
+    max_items: int = Field(default=20, ge=5, le=60)
+
+
+class StudyGuideItem(BaseModel):
+    order: int
+    section: str
+    form_reference: str
+    criterion: str
+    regulation_reference: str
+    regulation_confidence: int
+
+
+class StudyGuideResponse(BaseModel):
+    test_name: str
+    form_title: str
+    form_page_url: str
+    form_download_url: str
+    chronological_items: List[StudyGuideItem]
+    notes: List[str]
+
+
 class HealthResponse(BaseModel):
     status: str
     service: str
