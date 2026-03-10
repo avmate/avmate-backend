@@ -78,8 +78,10 @@ def startup_event() -> None:
     if settings.preload_model:
         thread = threading.Thread(target=get_embedding_service().load, daemon=True)
         thread.start()
-    if settings.auto_index_on_startup and get_vector_store().count() == 0:
-        _ensure_background_index()
+    if settings.auto_index_on_startup:
+        vector_store = get_vector_store()
+        if settings.force_reindex_on_startup or vector_store.count() == 0:
+            _ensure_background_index()
 
 
 def _run_background_index() -> None:

@@ -38,6 +38,7 @@ class Settings:
     )
     preload_model: bool = _as_bool(os.getenv("PRELOAD_EMBEDDINGS"), default=False)
     auto_index_on_startup: bool = _as_bool(os.getenv("AUTO_INDEX_ON_STARTUP"), default=False)
+    force_reindex_on_startup: bool = _as_bool(os.getenv("FORCE_REINDEX_ON_STARTUP"), default=False)
     r2_base_url: str = os.getenv(
         "R2_BASE_URL",
         "https://pub-a32237578ade418f9375e48bb3f1982a.r2.dev",
