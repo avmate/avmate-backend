@@ -211,6 +211,14 @@ class SearchService:
             references = self._prioritize_weather_minima_references(references, top_k)
             references = self._ensure_parent_subsection_reference(references, parent_label="6.2", limit=top_k)
             references = self._ensure_special_weather_parent_reference(references, limit=top_k)
+        explicit_subsection_labels = query_profile.get("explicit_subsection_labels", [])
+        explicit_page_hints = query_profile.get("explicit_page_hints", [])
+        explicit_special_weather_query = (
+            "6.2" in explicit_subsection_labels
+            and any(hint.startswith("enr 1.5") for hint in explicit_page_hints)
+        )
+        if explicit_special_weather_query:
+            references = self._ensure_special_weather_parent_reference(references, limit=top_k)
         if query_profile.get("qnh_intent"):
             references = self._prioritize_qnh_references(references, query_profile, top_k)
             references = self._ensure_parent_subsection_reference(references, parent_label="5.3", limit=top_k)
