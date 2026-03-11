@@ -237,6 +237,13 @@ class SearchService:
             references = self._ensure_parent_subsection_reference(references, parent_label="5.3", limit=top_k)
         if query_profile.get("heading_rollup_intent"):
             references = self._expand_heading_subsection_references(references, query_profile, top_k)
+        if query_profile.get("weather_minima_intent"):
+            references = self._ensure_special_weather_parent_reference(
+                references,
+                limit=top_k,
+                prefer_special_phrase=True,
+            )
+            references = self._dedupe_by_subsection_label(references, limit=top_k)
 
         if not references:
             return SearchResponse(
@@ -1030,6 +1037,9 @@ class SearchService:
 
         base_score = float(references[0].score)
         regulation_hint = references[0].regulation_type or None
+        preferred_page_prefix = self._page_ref_prefix(references[0].page_ref) or self._citation_page_prefix(
+            references[0].citation
+        )
         family_refs: list[ReferenceItem] = []
         seen_citations: set[str] = set()
         for parent_label in parent_labels:
@@ -1038,6 +1048,7 @@ class SearchService:
                 query_profile=query_profile,
                 regulation_hint=regulation_hint,
                 base_score=base_score,
+                preferred_page_prefix=preferred_page_prefix,
             )
             for item in family:
                 key = item.citation.lower()
@@ -1093,6 +1104,7 @@ class SearchService:
         query_profile: dict,
         regulation_hint: str | None,
         base_score: float,
+        preferred_page_prefix: str,
     ) -> list[ReferenceItem]:
         query_terms = [term for term in query_profile.get("terms", []) if len(term) >= 3][:8]
         terms = [parent_label, *query_terms]
@@ -1125,6 +1137,9 @@ class SearchService:
             if explicit_page_hints and page_ref_lower and not any(
                 page_ref_lower.startswith(hint) for hint in explicit_page_hints
             ):
+                continue
+            section_page_prefix = self._page_ref_prefix(page_ref_lower) or self._citation_page_prefix(raw_citation)
+            if preferred_page_prefix and section_page_prefix and section_page_prefix != preferred_page_prefix:
                 continue
 
             text = f"{section.get('title', '')} {section.get('text', '')}".lower()
@@ -1230,6 +1245,35 @@ class SearchService:
                 return (999,)
             values.append(int(part))
         return tuple(values)
+
+    def _page_ref_prefix(self, page_ref: str) -> str:
+        normalized = " ".join((page_ref or "").split())
+        if not normalized:
+            return ""
+        match = PAGE_REF_PARSE_PATTERN.match(normalized)
+        if not match:
+            return ""
+        return " ".join(match.group("prefix").upper().split())
+
+    def _citation_page_prefix(self, citation: str) -> str:
+        match = PAGE_REF_PATTERN.search(citation or "")
+        if not match:
+            return ""
+        return self._page_ref_prefix(match.group(0))
+
+    def _dedupe_by_subsection_label(self, references: list[ReferenceItem], *, limit: int) -> list[ReferenceItem]:
+        deduped: list[ReferenceItem] = []
+        seen: set[str] = set()
+        for item in references:
+            label = self._citation_subsection_label(item.citation)
+            key = label or item.citation.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(item)
+            if len(deduped) >= limit:
+                break
+        return deduped
 
     def _prioritize_weather_minima_references(self, references: list[ReferenceItem], top_k: int) -> list[ReferenceItem]:
         if not references:
