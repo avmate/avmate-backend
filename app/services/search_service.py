@@ -972,14 +972,6 @@ class SearchService:
             for item in references:
                 subsection = self._citation_subsection_label(item.citation)
                 citation_lower = item.citation.lower()
-                if subsection == "6.2" and canonical_page_token in citation_lower and _has_special_weather_phrase(item):
-                    promoted_parent = item.model_copy(
-                        update={"score": round(max(0.0, float(item.score) + 0.001), 4)}
-                    )
-                    return _promote_to_front(promoted_parent)
-            for item in references:
-                subsection = self._citation_subsection_label(item.citation)
-                citation_lower = item.citation.lower()
                 if subsection.startswith("6.2.") and canonical_page_token in citation_lower and _has_special_weather_phrase(item):
                     parent_citation = re.sub(
                         rf"(\bsubsection\s+){re.escape(subsection)}\b",
@@ -992,6 +984,14 @@ class SearchService:
                             "citation": parent_citation,
                             "score": round(max(0.0, float(item.score) + 0.001), 4),
                         }
+                    )
+                    return _promote_to_front(promoted_parent)
+            for item in references:
+                subsection = self._citation_subsection_label(item.citation)
+                citation_lower = item.citation.lower()
+                if subsection == "6.2" and canonical_page_token in citation_lower and _has_special_weather_phrase(item):
+                    promoted_parent = item.model_copy(
+                        update={"score": round(max(0.0, float(item.score) + 0.001), 4)}
                     )
                     return _promote_to_front(promoted_parent)
             if has_canonical_parent:
