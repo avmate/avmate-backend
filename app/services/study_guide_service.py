@@ -253,7 +253,7 @@ class StudyGuideService:
     def _map_regulation_reference(self, test_name: str, criterion: str) -> tuple[str, int]:
         query = f"{test_name} {criterion[:220]}"
         try:
-            result = self._search_service.search(query=query, top_k=1)
+            result = self._search_service.search(query=query, top_k=1, use_llm=False)
         except Exception:
             return "No reliable regulation match", 0
         if not result.references:

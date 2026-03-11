@@ -6,6 +6,7 @@ from app.config import Settings, get_settings
 from app.services.canonical_store import CanonicalStore
 from app.services.embedding_service import EmbeddingService
 from app.services.indexer_service import IndexerService
+from app.services.llm_answer_service import LLMAnswerService
 from app.services.r2_catalog import RegulationCatalog
 from app.services.search_service import SearchService
 from app.services.study_guide_service import StudyGuideService
@@ -43,8 +44,27 @@ def get_catalog() -> RegulationCatalog:
     )
 
 
+@lru_cache(maxsize=1)
+def get_llm_answer_service() -> LLMAnswerService:
+    settings = get_settings()
+    return LLMAnswerService(
+        api_key=settings.anthropic_api_key,
+        model=settings.llm_model,
+        timeout_seconds=settings.llm_timeout_seconds,
+        max_tokens=settings.llm_max_tokens,
+        temperature=settings.llm_temperature,
+    )
+
+
 def get_search_service() -> SearchService:
-    return SearchService(get_embedding_service(), get_vector_store(), get_canonical_store())
+    settings = get_settings()
+    return SearchService(
+        get_embedding_service(),
+        get_vector_store(),
+        get_canonical_store(),
+        llm_answer_service=get_llm_answer_service(),
+        enable_llm_answers=settings.enable_llm_answers,
+    )
 
 
 def get_indexer_service() -> IndexerService:

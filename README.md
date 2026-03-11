@@ -31,6 +31,12 @@ FastAPI backend for Australian aviation regulation search. The backend is struct
   - `RATE_LIMIT_ENABLED=true`
   - `RATE_LIMIT_REQUESTS=120`
   - `RATE_LIMIT_WINDOW_SECONDS=60`
+  - `ENABLE_LLM_ANSWERS=true` to enable grounded LLM synthesis
+  - `ANTHROPIC_API_KEY=...` required when `ENABLE_LLM_ANSWERS=true`
+  - `LLM_MODEL=claude-3-5-sonnet-latest`
+  - `LLM_TIMEOUT_SECONDS=45`
+  - `LLM_MAX_TOKENS=1100`
+  - `LLM_TEMPERATURE=0.1`
 
 ## Search behavior
 
@@ -39,7 +45,9 @@ FastAPI backend for Australian aviation regulation search. The backend is struct
 - `/search` returns a `503` if the index is empty instead of crashing the container.
 - Results are sourced from indexed regulation text and include citations, references, and study questions.
 - Numeric queries (for example circling minima by aircraft category) are re-ranked with lexical and numeric evidence checks.
+- Strict numeric queries use stronger evidence checks (table signature + unit evidence) before a reference is accepted.
 - AIP citations include page and subsection when page markers are present in the extracted text.
+- Optional grounded LLM synthesis runs only after retrieval and only using the selected references.
 - `X-Request-ID` is returned on API responses for easier tracing in logs.
 
 ## Indexing workflow
