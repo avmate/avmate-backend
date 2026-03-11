@@ -22,6 +22,11 @@ CITATION_QUERY_PATTERN = re.compile(
     r")",
     re.IGNORECASE,
 )
+ENR_SUBSECTION_QUERY_PATTERN = re.compile(
+    r"\b(?:AIP\s+)?(?:GEN|ENR|AD)\s+\d+(?:\.\d+)?(?:\s*-\s*\(?\d+\)?)?\s+"
+    r"(?:subsection|section)\s+([1-9]\d?(?:\.\d+){1,4})\b",
+    re.IGNORECASE,
+)
 TABLE_PATTERN = re.compile(r"\bTable\s+\d+(?:\.\d+)+\b", re.IGNORECASE)
 PAGE_PATTERN = re.compile(r"\b(?:GEN|ENR|AD|AIP)\s+\d+(?:\.\d+)?\s*-\s*\(?\d+\)?\b", re.IGNORECASE)
 AIP_SUBSECTION_PATTERN = re.compile(
@@ -39,6 +44,12 @@ def extract_citations(text: str) -> list[str]:
     citations: list[str] = []
     for match in CITATION_QUERY_PATTERN.finditer(text):
         citation = " ".join(match.group(0).split())
+        if citation not in citations:
+            citations.append(citation)
+    # Accept queries that specify AIP page blocks with explicit subsection labels,
+    # e.g. "ENR 1.5 subsection 6.2", and map them to canonical AIP subsection form.
+    for match in ENR_SUBSECTION_QUERY_PATTERN.finditer(text):
+        citation = f"AIP {match.group(1)}"
         if citation not in citations:
             citations.append(citation)
     return citations

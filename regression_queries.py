@@ -11,6 +11,14 @@ import requests
 BASE_URL = os.getenv("AVMATE_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 TIMEOUT_SECONDS = int(os.getenv("AVMATE_REGRESSION_TIMEOUT", "90"))
 READY_WAIT_SECONDS = int(os.getenv("AVMATE_READY_WAIT_SECONDS", "120"))
+CASE_RETRY_ATTEMPTS = int(os.getenv("AVMATE_CASE_RETRY_ATTEMPTS", "4"))
+CASE_RETRY_DELAY_SECONDS = int(os.getenv("AVMATE_CASE_RETRY_DELAY_SECONDS", "8"))
+RETRYABLE_503_MARKERS = (
+    "index build in progress",
+    "indexing_in_progress",
+    "embedding model is warming up",
+    "embedding_warmup",
+)
 
 
 @dataclass(frozen=True)
@@ -19,6 +27,7 @@ class ExpectedQuery:
     expected_citation: str
     expected_phrase: str
     expected_additional_citations: tuple[str, ...] = ()
+    top_k: int = 5
 
 
 TEST_CASES = [
@@ -38,16 +47,41 @@ TEST_CASES = [
         expected_citation="AIP ENR 1.5 - 39 subsection 6.2",
         expected_phrase="Special Alternate Weather Minima",
     ),
+    ExpectedQuery(
+        query="What is the circling radius for category C aircraft?",
+        expected_citation="AIP ENR 1.5 - 4 subsection 1.6.5. Table 1.1",
+        expected_phrase="4.11NM",
+    ),
+    ExpectedQuery(
+        query="When are special alternate weather minima not available?",
+        expected_citation="AIP ENR 1.5 - 39 subsection 6.2",
+        expected_phrase="Special alternate weather minima",
+    ),
+    ExpectedQuery(
+        query="What does ENR 1.5 subsection 6.2 say?",
+        expected_citation="AIP ENR 1.5 - 39 subsection 6.2",
+        expected_phrase="Special alternate weather minima",
+    ),
 ]
 
 
 def run_case(case: ExpectedQuery) -> tuple[bool, str]:
-    response = requests.post(
-        f"{BASE_URL}/search",
-        json={"query": case.query, "top_k": 5},
-        timeout=TIMEOUT_SECONDS,
-    )
-    if response.status_code != 200:
+    attempts = max(1, CASE_RETRY_ATTEMPTS + 1)
+    response = None
+    for attempt in range(1, attempts + 1):
+        response = requests.post(
+            f"{BASE_URL}/search",
+            json={"query": case.query, "top_k": case.top_k},
+            timeout=TIMEOUT_SECONDS,
+        )
+        if response.status_code == 200:
+            break
+        body_lower = response.text.lower()
+        retryable_503 = response.status_code == 503 and any(marker in body_lower for marker in RETRYABLE_503_MARKERS)
+        retryable_429 = response.status_code == 429
+        if attempt < attempts and (retryable_503 or retryable_429):
+            time.sleep(CASE_RETRY_DELAY_SECONDS)
+            continue
         return False, f"status={response.status_code} body={response.text[:240]}"
 
     payload = response.json()

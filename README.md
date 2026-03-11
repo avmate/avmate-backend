@@ -72,3 +72,21 @@ If you change parsing or citation logic, rebuild the index:
    `'@ | python -`
 3. Validate study guide source lookup:
    `Invoke-WebRequest http://127.0.0.1:8000/study-guide -Method Post -ContentType 'application/json' -Body '{"test_name":"instrument rating - aeroplane","max_items":10}' | Select-Object -Expand Content`
+
+## Regression checks
+
+- Run local citation regression tests:
+  `python -m unittest discover -s tests -p "test_*.py" -v`
+- Run live API regression script:
+  `python regression_queries.py`
+- Optional script tuning variables:
+  - `AVMATE_BASE_URL`
+  - `AVMATE_READY_WAIT_SECONDS`
+  - `AVMATE_CASE_RETRY_ATTEMPTS`
+  - `AVMATE_CASE_RETRY_DELAY_SECONDS`
+
+## CI gate
+
+- GitHub Actions workflow: `.github/workflows/backend-regression.yml`
+- `citation-regression` job runs on push/PR and gates merges with offline citation regression tests.
+- `live-regression` job is optional and runs only when repository variable `AVMATE_BASE_URL` is set.

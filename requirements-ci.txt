@@ -1,0 +1,4 @@
+pydantic==2.11.7
+requests==2.32.5
+SQLAlchemy==2.0.36
+chromadb==1.0.20

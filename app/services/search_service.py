@@ -312,6 +312,14 @@ class SearchService:
             if len(token) > 2 and token not in STOP_WORDS and token not in LOW_SIGNAL_TERMS
         ]
         phrases = [phrase for phrase in re.findall(r"\b[a-z0-9]+\s+[a-z0-9]+\b", query_lower) if len(phrase) > 7]
+        explicit_subsection_labels = [
+            label for label in re.findall(r"\b(?:subsection|section)\s+([1-9]\d?(?:\.\d+){1,4})\b", query_lower)
+        ]
+        for citation in extract_citations(query):
+            label = self._citation_subsection_label(citation)
+            if label:
+                explicit_subsection_labels.append(label)
+        explicit_subsection_labels = list(dict.fromkeys(explicit_subsection_labels))
 
         required_patterns: list[re.Pattern[str]] = []
         category_match = re.search(r"\bcat(?:egory)?\s*([abcd])\b", query_lower)
@@ -397,6 +405,7 @@ class SearchService:
             "special_weather_minima_intent": special_weather_minima_intent,
             "aip_preferred_intent": aip_preferred_intent,
             "qnh_intent": qnh_intent,
+            "explicit_subsection_labels": explicit_subsection_labels,
         }
 
     def _combine_score(
@@ -419,10 +428,16 @@ class SearchService:
         qnh_intent = bool(query_profile.get("qnh_intent"))
         weather_minima_intent = bool(query_profile.get("weather_minima_intent"))
         special_weather_minima_intent = bool(query_profile.get("special_weather_minima_intent"))
+        explicit_subsection_labels = query_profile.get("explicit_subsection_labels", [])
 
         citation_lower = citation.lower()
         document_lower = document.lower()
         is_aip_result = str(regulation_type or "").upper() == "AIP" or citation_lower.startswith("aip ")
+        citation_subsection = self._citation_subsection_label(citation)
+        explicit_subsection_match = any(
+            citation_subsection == label or citation_subsection.startswith(f"{label}.")
+            for label in explicit_subsection_labels
+        )
 
         citation_exact = any(requested == citation_lower for requested in requested_citations)
         citation_mentioned = bool(citation_lower) and citation_lower in query_lower
@@ -445,7 +460,6 @@ class SearchService:
             )
         )
         qnh_evidence = bool(re.search(r"\bqnh\b", document_lower) or re.search(r"\bqnh\b", citation_lower))
-        weather_subsection = self._citation_subsection_label(citation)
         weather_phrase_hit = bool(re.search(r"\bspecial\s+alternate\s+weather\s+minima\b", document_lower))
         toc_penalty = self._table_of_contents_penalty(document)
 
@@ -460,10 +474,12 @@ class SearchService:
                 passes_gate = False
             if qnh_intent and not qnh_evidence and semantic_score < 0.9:
                 passes_gate = False
+            if explicit_subsection_labels and not explicit_subsection_match and semantic_score < 0.94:
+                passes_gate = False
             if weather_minima_intent:
-                if weather_subsection == "6.2":
+                if citation_subsection == "6.2":
                     pass
-                elif weather_subsection.startswith("6.2."):
+                elif citation_subsection.startswith("6.2."):
                     pass
                 elif semantic_score < 0.95:
                     passes_gate = False
@@ -499,10 +515,12 @@ class SearchService:
             score -= 0.15
         if qnh_intent:
             score += 0.12 if qnh_evidence else -0.2
+        if explicit_subsection_labels:
+            score += 0.24 if explicit_subsection_match else -0.22
         if weather_minima_intent:
-            if weather_subsection == "6.2":
+            if citation_subsection == "6.2":
                 score += 0.3
-            elif weather_subsection.startswith("6.2."):
+            elif citation_subsection.startswith("6.2."):
                 score += 0.18
             else:
                 score -= 0.24
@@ -568,6 +586,7 @@ class SearchService:
         intent_tokens = query_profile.get("intent_tokens", [])
         numeric_intent = bool(query_profile.get("numeric_intent"))
         qnh_intent = bool(query_profile.get("qnh_intent"))
+        explicit_subsection_labels = query_profile.get("explicit_subsection_labels", [])
 
         ranked: list[tuple[float, ReferenceItem]] = []
         for section in sections:
@@ -614,6 +633,11 @@ class SearchService:
             toc_penalty = self._table_of_contents_penalty(canonical_text)
             numeric_evidence = bool(re.search(r"\b\d+(?:\.\d+)?\s*(?:nm|ft|m|kts|kt|hpa)\b", text_lower))
             qnh_evidence = "qnh" in text_lower or "qnh" in citation_lower
+            subsection = self._citation_subsection_label(citation)
+            explicit_subsection_match = any(
+                subsection == label or subsection.startswith(f"{label}.")
+                for label in explicit_subsection_labels
+            )
 
             if required_patterns and not required_ok:
                 continue
@@ -629,11 +653,12 @@ class SearchService:
                 score += 0.06 if numeric_evidence else -0.08
             if qnh_intent:
                 score += 0.14 if qnh_evidence else -0.2
-                subsection = self._citation_subsection_label(citation)
                 if subsection and subsection.startswith("5.3"):
                     score += 0.12
                 if subsection == "1.4.1":
                     score += 0.14
+            if explicit_subsection_labels:
+                score += 0.24 if explicit_subsection_match else -0.24
             if any(requested == citation_lower for requested in requested_citations):
                 score += 0.2
             score -= toc_penalty
@@ -1092,7 +1117,9 @@ class SearchService:
 
         by_label = {label: block for label, block in blocks}
         query_lower = str(query_profile.get("query_lower", "") or "")
-        explicit_labels = set(SUBSECTION_PATTERN.findall(query_lower))
+        explicit_labels = query_profile.get("explicit_subsection_labels") or SUBSECTION_PATTERN.findall(query_lower)
+        explicit_labels = list(dict.fromkeys(explicit_labels))
+        explicit_labels.sort(key=lambda label: (label.count("."), len(label)), reverse=True)
         for label in explicit_labels:
             if label in by_label:
                 return label, by_label[label]
@@ -1147,6 +1174,7 @@ class SearchService:
         phrases = query_profile.get("phrases", [])
         required_patterns = query_profile.get("required_patterns", [])
         intent_tokens = query_profile.get("intent_tokens", [])
+        explicit_label_set = set(explicit_labels)
 
         best_label = default_label
         best_block = by_label.get(default_label, "")
@@ -1162,7 +1190,7 @@ class SearchService:
             required_hits = sum(1 for pattern in required_patterns if pattern.search(block))
             intent_hits = sum(1 for token in intent_tokens if token in lower)
             hierarchy_bonus = max(0.0, 1.2 - (label.count(".") * 0.35))
-            label_bonus = 2.0 if label in explicit_labels else 0.0
+            label_bonus = 2.0 if label in explicit_label_set else 0.0
             score = (
                 (lexical_hits * 0.35)
                 + (phrase_hits * 0.55)
