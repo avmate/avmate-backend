@@ -266,6 +266,24 @@ Additional notes unrelated to special alternate minima.
         self.assertIn("AIP ENR 1.5 - 39 subsection 6.2.2", citations)
         self.assertIn("AIP ENR 1.5 - 39 subsection 6.2.3", citations)
 
+    def test_select_answer_reference_prefers_operational_child_for_criteria_query(self) -> None:
+        profile = self.service._build_query_profile("What is the approach criteria for the Special Alternate Weather Minima?")
+        references = [
+            _reference(
+                "AIP ENR 1.5 - 39 subsection 6.2",
+                text="6.2.2 Special alternate weather minima are identified on charts.",
+                score=0.95,
+            ),
+            _reference(
+                "AIP ENR 1.5 - 39 subsection 6.2.1",
+                text="6.2.1 Dual ILS/VOR approach capability must include duplicated LOC and GP.",
+                score=0.9,
+            ),
+        ]
+
+        selected = self.service._select_answer_reference(profile, references)
+        self.assertEqual(selected.citation, "AIP ENR 1.5 - 39 subsection 6.2.1")
+
 
 if __name__ == "__main__":
     unittest.main()

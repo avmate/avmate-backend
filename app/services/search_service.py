@@ -267,10 +267,11 @@ class SearchService:
             if item.citation not in citations:
                 citations.append(item.citation)
 
-        answer = self._build_answer(query, top_reference)
+        answer_reference = self._select_answer_reference(query_profile, references)
+        answer = self._build_answer(query, answer_reference)
         legal_explanation = self._build_legal_explanation(query, references)
-        plain_english = self._build_plain_english(query, top_reference)
-        example = self._build_example(query, top_reference)
+        plain_english = self._build_plain_english(query, answer_reference)
+        example = self._build_example(query, answer_reference)
         study_questions = [
             f"What does {citations[0]} require in the exact wording of the regulation?",
             "Which conditions, exceptions, or definitions in the cited text could change the answer?",
@@ -335,6 +336,31 @@ class SearchService:
             confidence=confidence,
             explanation="Results are gated by semantic similarity plus mandatory lexical intent matches before citation selection.",
         )
+
+    def _select_answer_reference(self, query_profile: dict, references: list[ReferenceItem]) -> ReferenceItem:
+        lead = references[0]
+        if not query_profile.get("heading_rollup_intent"):
+            return lead
+
+        query_lower = str(query_profile.get("query_lower", "") or "")
+        criteria_query = any(
+            token in query_lower for token in ("approach", "criteria", "criterion", "requirement", "requirements")
+        )
+        if not criteria_query:
+            return lead
+
+        for item in references:
+            subsection = self._citation_subsection_label(item.citation)
+            text = f"{item.title} {item.text}".lower()
+            if subsection.endswith(".1") and (
+                "approach" in text or "capability" in text or "must include" in text
+            ):
+                return item
+        for item in references:
+            text = f"{item.title} {item.text}".lower()
+            if "approach" in text and ("capability" in text or "must include" in text):
+                return item
+        return lead
 
     def _build_query_profile(self, query: str) -> dict:
         query_lower = query.lower()
