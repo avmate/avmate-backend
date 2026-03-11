@@ -31,6 +31,47 @@ def _reference(
     )
 
 
+def _section(
+    citation: str,
+    *,
+    text: str,
+    title: str,
+    page_ref: str = "ENR 1.5 - 39",
+    regulation_type: str = "AIP",
+) -> dict:
+    return {
+        "section_id": f"row-{abs(hash((citation, title))) % 100000}",
+        "regulation_id": citation,
+        "citation": citation,
+        "part": "",
+        "section_label": "",
+        "title": title,
+        "text": text,
+        "page_ref": page_ref,
+        "table_ref": "",
+        "source_file": "source.pdf",
+        "source_url": "https://example.invalid/source.pdf",
+        "regulation_type": regulation_type,
+        "section_order": 0,
+    }
+
+
+class _StubCanonicalStore:
+    def __init__(self, sections: list[dict]) -> None:
+        self._sections = sections
+
+    def search_sections_by_terms(
+        self,
+        terms: list[str],
+        *,
+        limit: int = 120,
+        regulation_type: str | None = None,
+    ) -> list[dict]:
+        if regulation_type:
+            return [row for row in self._sections if row.get("regulation_type", "").lower() == regulation_type.lower()][:limit]
+        return self._sections[:limit]
+
+
 class SearchServiceRegressionTests(unittest.TestCase):
     def setUp(self) -> None:
         # Tests target ranking/citation internals only; external services are not used.
@@ -172,6 +213,58 @@ Additional notes unrelated to special alternate minima.
         label, block = self.service._select_best_aip_subsection(sample_text, "AIP 6.1", profile)
         self.assertEqual(label, "6.2")
         self.assertIn("Special alternate weather minima", block)
+
+    def test_build_query_profile_sets_heading_rollup_for_criteria_queries(self) -> None:
+        profile = self.service._build_query_profile(
+            "What is the approach criteria for the Special Alternate Weather Minima?"
+        )
+        self.assertTrue(profile["heading_rollup_intent"])
+
+    def test_expand_heading_subsection_references_includes_parent_and_children(self) -> None:
+        service = SearchService(
+            embeddings=None,
+            vector_store=None,
+            canonical_store=_StubCanonicalStore(
+                [
+                    _section(
+                        "AIP 6.2.1",
+                        title="AIP 6.2.1 Special alternate weather minima are available",
+                        text="6.2.1 Special alternate weather minima are available for specified approaches with dual ILS/VOR capability.",
+                    ),
+                    _section(
+                        "AIP 6.2.2",
+                        title="AIP 6.2.2 Special alternate weather minima are identified on charts",
+                        text="6.2.2 Special alternate weather minima are identified on applicable instrument approach charts.",
+                    ),
+                    _section(
+                        "AIP 6.2.3",
+                        title="AIP 6.2.3 Where special minima are not available",
+                        text="6.2.3 Where there is a protracted unserviceability, special alternate minima may be unavailable.",
+                    ),
+                ]
+            ),
+        )
+        profile = service._build_query_profile("What is the approach criteria for the Special Alternate Weather Minima?")
+        seed_refs = [
+            _reference(
+                "AIP ENR 1.5 - 39 subsection 6.2",
+                text="6.2 Special Alternate Weather Minima",
+                score=0.94,
+            ),
+            _reference(
+                "AIP ENR 1.5 - 39 subsection 6.2.2",
+                text="6.2.2 Special alternate weather minima are identified on applicable charts.",
+                score=0.9,
+            ),
+        ]
+
+        expanded = service._expand_heading_subsection_references(seed_refs, profile, top_k=6)
+        citations = [item.citation for item in expanded]
+
+        self.assertIn("AIP ENR 1.5 - 39 subsection 6.2", citations)
+        self.assertIn("AIP ENR 1.5 - 39 subsection 6.2.1", citations)
+        self.assertIn("AIP ENR 1.5 - 39 subsection 6.2.2", citations)
+        self.assertIn("AIP ENR 1.5 - 39 subsection 6.2.3", citations)
 
 
 if __name__ == "__main__":

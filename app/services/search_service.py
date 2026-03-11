@@ -76,6 +76,15 @@ CIRCLING_ROW_PATTERN = re.compile(
 )
 QNH_PRIORITY_SUBSECTIONS = ("1.4.1", "1.4", "5.3", "5.3.1", "5.3.2", "5.3.3", "5.3.4")
 WEATHER_MINIMA_PRIORITY_SUBSECTIONS = ("6.2", "6.2.1", "6.2.2", "6.2.3", "6.2.4")
+HEADING_ROLLUP_HINTS = (
+    "criteria",
+    "criterion",
+    "requirement",
+    "requirements",
+    "overview",
+    "explain",
+    "what does",
+)
 
 
 class SearchService:
@@ -226,6 +235,8 @@ class SearchService:
         if query_profile.get("qnh_intent"):
             references = self._prioritize_qnh_references(references, query_profile, top_k)
             references = self._ensure_parent_subsection_reference(references, parent_label="5.3", limit=top_k)
+        if query_profile.get("heading_rollup_intent"):
+            references = self._expand_heading_subsection_references(references, query_profile, top_k)
 
         if not references:
             return SearchResponse(
@@ -403,6 +414,9 @@ class SearchService:
                 query_lower,
             )
         )
+        heading_rollup_intent = bool(explicit_subsection_labels) or any(
+            hint in query_lower for hint in HEADING_ROLLUP_HINTS
+        )
         strict_single_reference = bool(category_match and "circling" in query_lower and numeric_intent)
         if weather_minima_intent:
             strict_single_reference = True
@@ -426,6 +440,7 @@ class SearchService:
             "qnh_intent": qnh_intent,
             "explicit_subsection_labels": explicit_subsection_labels,
             "explicit_page_hints": explicit_page_hints,
+            "heading_rollup_intent": heading_rollup_intent,
         }
 
     def _combine_score(
@@ -997,6 +1012,224 @@ class SearchService:
             return references[:limit]
 
         return _promote_to_front(promoted)
+
+    def _expand_heading_subsection_references(
+        self,
+        references: list[ReferenceItem],
+        query_profile: dict,
+        top_k: int,
+    ) -> list[ReferenceItem]:
+        if not references:
+            return []
+        if not self._canonical_store:
+            return references[:top_k]
+
+        parent_labels = self._derive_rollup_parent_labels(references, query_profile)
+        if not parent_labels:
+            return references[:top_k]
+
+        base_score = float(references[0].score)
+        regulation_hint = references[0].regulation_type or None
+        family_refs: list[ReferenceItem] = []
+        seen_citations: set[str] = set()
+        for parent_label in parent_labels:
+            family = self._lookup_subsection_family_references(
+                parent_label=parent_label,
+                query_profile=query_profile,
+                regulation_hint=regulation_hint,
+                base_score=base_score,
+            )
+            for item in family:
+                key = item.citation.lower()
+                if key in seen_citations:
+                    continue
+                seen_citations.add(key)
+                family_refs.append(item)
+
+        if not family_refs:
+            return references[:top_k]
+
+        merged: list[ReferenceItem] = []
+        seen: set[str] = set()
+        for item in [*family_refs, *references]:
+            key = item.citation.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(item)
+            if len(merged) >= top_k:
+                break
+        return merged
+
+    def _derive_rollup_parent_labels(self, references: list[ReferenceItem], query_profile: dict) -> list[str]:
+        labels: list[str] = []
+
+        explicit_labels = query_profile.get("explicit_subsection_labels", [])
+        for label in explicit_labels:
+            if label.count(".") >= 2:
+                parent = ".".join(label.split(".")[:-1])
+            else:
+                parent = label
+            if parent and parent not in labels:
+                labels.append(parent)
+        if labels:
+            return labels
+
+        lead_label = self._citation_subsection_label(references[0].citation)
+        if not lead_label:
+            return []
+        if lead_label.count(".") >= 2:
+            parent = ".".join(lead_label.split(".")[:-1])
+        elif lead_label.count(".") >= 1:
+            parent = lead_label
+        else:
+            parent = ""
+        return [parent] if parent else []
+
+    def _lookup_subsection_family_references(
+        self,
+        *,
+        parent_label: str,
+        query_profile: dict,
+        regulation_hint: str | None,
+        base_score: float,
+    ) -> list[ReferenceItem]:
+        query_terms = [term for term in query_profile.get("terms", []) if len(term) >= 3][:8]
+        terms = [parent_label, *query_terms]
+        sections = self._canonical_store.search_sections_by_terms(
+            terms,
+            limit=5000,
+            regulation_type=regulation_hint,
+        )
+        if not sections and regulation_hint:
+            sections = self._canonical_store.search_sections_by_terms(terms, limit=5000)
+        if not sections:
+            return []
+
+        explicit_page_hints = query_profile.get("explicit_page_hints", [])
+        child_prefix = f"{parent_label}."
+        best_by_label: dict[str, tuple[float, dict]] = {}
+        for section in sections:
+            raw_citation = str(section.get("citation", "") or "")
+            subsection_label = self._citation_subsection_label(raw_citation)
+            if not subsection_label:
+                continue
+            if subsection_label != parent_label and not subsection_label.startswith(child_prefix):
+                continue
+            if subsection_label.startswith(child_prefix):
+                suffix = subsection_label[len(child_prefix) :]
+                if "." in suffix:
+                    continue
+
+            page_ref_lower = " ".join(str(section.get("page_ref", "") or "").split()).lower()
+            if explicit_page_hints and page_ref_lower and not any(
+                page_ref_lower.startswith(hint) for hint in explicit_page_hints
+            ):
+                continue
+
+            text = f"{section.get('title', '')} {section.get('text', '')}".lower()
+            overlap = sum(1 for term in query_terms if term in text)
+            candidate_score = float(overlap)
+            if subsection_label == parent_label:
+                candidate_score += 3.0
+            elif subsection_label.startswith(child_prefix):
+                candidate_score += 2.0
+            if re.search(r"\bspecial\s+alternate\s+weather\s+minima\b", text):
+                candidate_score += 0.6
+
+            current = best_by_label.get(subsection_label)
+            if current is None or candidate_score > current[0]:
+                best_by_label[subsection_label] = (candidate_score, section)
+
+        if not best_by_label:
+            return []
+
+        ordered_labels: list[str] = []
+        if parent_label in best_by_label:
+            ordered_labels.append(parent_label)
+
+        children = [
+            label
+            for label in best_by_label
+            if label.startswith(child_prefix) and "." not in label[len(child_prefix) :]
+        ]
+        children = sorted(children, key=self._subsection_sort_key)[:4]
+        ordered_labels.extend(children)
+
+        references: list[ReferenceItem] = []
+        for index, label in enumerate(ordered_labels):
+            section = best_by_label[label][1]
+            item = self._build_reference_from_section(
+                section,
+                query_profile,
+                score=max(0.45, base_score - (index * 0.02)),
+                subsection_hint_override=label,
+            )
+            if item is None:
+                continue
+            references.append(item)
+        return references
+
+    def _build_reference_from_section(
+        self,
+        section: dict,
+        query_profile: dict,
+        *,
+        score: float,
+        subsection_hint_override: str = "",
+    ) -> ReferenceItem | None:
+        raw_citation = str(section.get("citation", "Unknown") or "Unknown")
+        regulation_type = str(section.get("regulation_type", "UNKNOWN") or "UNKNOWN")
+        canonical_text = str(section.get("text", "") or "")
+        if not canonical_text.strip():
+            return None
+
+        subsection_hint = subsection_hint_override
+        focused_text = canonical_text
+        if regulation_type.upper() == "AIP" and not subsection_hint:
+            subsection_hint, subsection_text = self._select_best_aip_subsection(canonical_text, raw_citation, query_profile)
+            if subsection_text:
+                focused_text = subsection_text
+
+        page_ref = self._resolve_page_ref(
+            canonical_text,
+            raw_citation,
+            section.get("page_ref", ""),
+            subsection_hint,
+        )
+        table_ref = str(section.get("table_ref", "") or self._infer_table_ref(focused_text))
+        citation = self._format_output_citation(
+            raw_citation,
+            regulation_type,
+            page_ref,
+            table_ref,
+            focused_text,
+            subsection_hint=subsection_hint,
+        )
+        return ReferenceItem(
+            section_id=str(section.get("section_id", "")),
+            regulation_id=str(section.get("regulation_id", raw_citation)),
+            citation=citation,
+            title=self._refine_title(str(section.get("title", "Untitled")), raw_citation, focused_text),
+            regulation_type=regulation_type,
+            source_file=str(section.get("source_file", "")),
+            source_url=str(section.get("source_url", "")),
+            text=focused_text,
+            part=str(section.get("part", "")),
+            page_ref=page_ref,
+            table_ref=table_ref,
+            section_index=int(section.get("section_order", 0) or 0),
+            chunk_index=0,
+            score=round(max(0.0, min(1.0, float(score))), 4),
+        )
+
+    def _subsection_sort_key(self, label: str) -> tuple[int, ...]:
+        values: list[int] = []
+        for part in label.split("."):
+            if not part.isdigit():
+                return (999,)
+            values.append(int(part))
+        return tuple(values)
 
     def _prioritize_weather_minima_references(self, references: list[ReferenceItem], top_k: int) -> list[ReferenceItem]:
         if not references:
