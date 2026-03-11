@@ -351,6 +351,13 @@ class SearchService:
                 study_answers = llm_output.get("study_answers", study_answers)
                 contextual_notes.append("Grounded LLM synthesis enabled using only retrieved references.")
 
+        answer = self._format_readable_text(answer)
+        legal_explanation = self._format_readable_text(legal_explanation)
+        plain_english = self._format_readable_text(plain_english)
+        example = self._format_readable_text(example)
+        study_questions = [self._format_readable_text(item) for item in study_questions]
+        study_answers = [self._format_readable_text(item) for item in study_answers]
+
         return SearchResponse(
             answer=answer,
             legal_explanation=legal_explanation,
@@ -1876,6 +1883,31 @@ class SearchService:
 
         best = min(same_prefix, key=lambda item: item[1])
         return best[2]
+
+    def _format_readable_text(self, text: str) -> str:
+        normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+        paragraphs: list[str] = []
+        for paragraph in re.split(r"\n{2,}", normalized):
+            lines: list[str] = []
+            for line in paragraph.split("\n"):
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if stripped.startswith("- "):
+                    content = " ".join(stripped[2:].split())
+                    lines.append(f"- {content}")
+                else:
+                    lines.append(" ".join(stripped.split()))
+            if lines:
+                paragraphs.append("\n".join(lines))
+
+        formatted = "\n\n".join(paragraphs).strip()
+        if not formatted:
+            return ""
+
+        # Repair merged sentence boundaries from PDF extraction artifacts.
+        formatted = re.sub(r"(?<=[a-z0-9])\.(?=[A-Z])", ". ", formatted)
+        return formatted
 
     def _extract_operational_sentence(self, text: str) -> str:
         candidates = [segment.strip() for segment in re.split(r"(?<=[.!?])\s+", text) if segment.strip()]

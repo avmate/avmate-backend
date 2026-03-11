@@ -248,7 +248,13 @@ class LLMAnswerService:
     def _clean_text(self, value: Any) -> str:
         if not isinstance(value, str):
             return ""
-        return " ".join(value.split()).strip()
+        normalized = value.replace("\r\n", "\n").replace("\r", "\n")
+        paragraphs: list[str] = []
+        for paragraph in re.split(r"\n{2,}", normalized):
+            cleaned = " ".join(paragraph.split()).strip()
+            if cleaned:
+                paragraphs.append(cleaned)
+        return "\n\n".join(paragraphs).strip()
 
     def _mentions_unknown_citation(self, text: str, allowed_citations: list[str]) -> bool:
         if not text:

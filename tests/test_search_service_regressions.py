@@ -324,6 +324,12 @@ Additional notes unrelated to special alternate minima.
         self.assertIn("pilot", example.lower())
         self.assertIn("notam", example.lower())
 
+    def test_format_readable_text_adds_sentence_spacing_and_preserves_paragraphs(self) -> None:
+        raw = "Sentence one.Second sentence.\n\n- bullet    one\n- bullet two"
+        formatted = self.service._format_readable_text(raw)
+        self.assertIn("Sentence one. Second sentence.", formatted)
+        self.assertIn("\n\n- bullet one\n- bullet two", formatted)
+
 
 if __name__ == "__main__":
     unittest.main()
