@@ -75,6 +75,7 @@ CIRCLING_ROW_PATTERN = re.compile(
     re.IGNORECASE,
 )
 QNH_PRIORITY_SUBSECTIONS = ("1.4.1", "1.4", "5.3", "5.3.1", "5.3.2", "5.3.3", "5.3.4")
+WEATHER_MINIMA_PRIORITY_SUBSECTIONS = ("6.2", "6.2.1", "6.2.2", "6.2.3", "6.2.4")
 
 
 class SearchService:
@@ -205,8 +206,12 @@ class SearchService:
                         references = lexical_fallback_refs
                     elif query_profile.get("qnh_intent"):
                         references = self._merge_references(references, lexical_fallback_refs, limit=max(top_k * 2, 10))
+        if query_profile.get("weather_minima_intent"):
+            references = self._prioritize_weather_minima_references(references, top_k)
+            references = self._ensure_parent_subsection_reference(references, parent_label="6.2", limit=top_k)
         if query_profile.get("qnh_intent"):
             references = self._prioritize_qnh_references(references, query_profile, top_k)
+            references = self._ensure_parent_subsection_reference(references, parent_label="5.3", limit=top_k)
 
         if not references:
             return SearchResponse(
@@ -326,10 +331,16 @@ class SearchService:
             and ("weather" in query_lower)
             and any(token in query_lower for token in ("minima", "minimum"))
         )
+        special_weather_minima_intent = weather_minima_intent and ("special" in query_lower)
         if weather_minima_intent:
             required_patterns.append(re.compile(r"\balternate\b", re.IGNORECASE))
             required_patterns.append(re.compile(r"\bweather\b", re.IGNORECASE))
             required_patterns.append(re.compile(r"\b(?:minima|minimum)\b", re.IGNORECASE))
+            if special_weather_minima_intent:
+                required_patterns.append(re.compile(r"\bspecial\b", re.IGNORECASE))
+                required_patterns.append(
+                    re.compile(r"\bspecial\s+alternate\s+weather\s+minima\b", re.IGNORECASE)
+                )
 
         intent_tokens = [
             token
@@ -383,6 +394,7 @@ class SearchService:
             "numeric_intent": numeric_intent,
             "strict_single_reference": strict_single_reference,
             "weather_minima_intent": weather_minima_intent,
+            "special_weather_minima_intent": special_weather_minima_intent,
             "aip_preferred_intent": aip_preferred_intent,
             "qnh_intent": qnh_intent,
         }
@@ -405,6 +417,8 @@ class SearchService:
         strict_single_reference = bool(query_profile.get("strict_single_reference"))
         aip_preferred_intent = bool(query_profile.get("aip_preferred_intent"))
         qnh_intent = bool(query_profile.get("qnh_intent"))
+        weather_minima_intent = bool(query_profile.get("weather_minima_intent"))
+        special_weather_minima_intent = bool(query_profile.get("special_weather_minima_intent"))
 
         citation_lower = citation.lower()
         document_lower = document.lower()
@@ -431,6 +445,8 @@ class SearchService:
             )
         )
         qnh_evidence = bool(re.search(r"\bqnh\b", document_lower) or re.search(r"\bqnh\b", citation_lower))
+        weather_subsection = self._citation_subsection_label(citation)
+        weather_phrase_hit = bool(re.search(r"\bspecial\s+alternate\s+weather\s+minima\b", document_lower))
         toc_penalty = self._table_of_contents_penalty(document)
 
         passes_gate = citation_exact or citation_mentioned
@@ -444,6 +460,15 @@ class SearchService:
                 passes_gate = False
             if qnh_intent and not qnh_evidence and semantic_score < 0.9:
                 passes_gate = False
+            if weather_minima_intent:
+                if weather_subsection == "6.2":
+                    pass
+                elif weather_subsection.startswith("6.2."):
+                    pass
+                elif semantic_score < 0.95:
+                    passes_gate = False
+                if special_weather_minima_intent and not weather_phrase_hit and semantic_score < 0.92:
+                    passes_gate = False
             if toc_penalty >= 0.2 and semantic_score < 0.85:
                 passes_gate = False
             if aip_preferred_intent and not is_aip_result and semantic_score < 0.92:
@@ -474,6 +499,15 @@ class SearchService:
             score -= 0.15
         if qnh_intent:
             score += 0.12 if qnh_evidence else -0.2
+        if weather_minima_intent:
+            if weather_subsection == "6.2":
+                score += 0.3
+            elif weather_subsection.startswith("6.2."):
+                score += 0.18
+            else:
+                score -= 0.24
+            if special_weather_minima_intent:
+                score += 0.16 if weather_phrase_hit else -0.16
         if aip_preferred_intent and not is_aip_result:
             score -= 0.35
         score -= toc_penalty
@@ -770,6 +804,89 @@ class SearchService:
         match = re.search(r"\bAIP\s+([0-9]+(?:\.[0-9]+){1,4})\b", citation, re.IGNORECASE)
         return match.group(1) if match else ""
 
+    def _ensure_parent_subsection_reference(
+        self,
+        references: list[ReferenceItem],
+        *,
+        parent_label: str,
+        limit: int,
+    ) -> list[ReferenceItem]:
+        if not references:
+            return []
+
+        has_parent = any(self._citation_subsection_label(item.citation) == parent_label for item in references)
+        if has_parent:
+            return references[:limit]
+
+        child_prefix = f"{parent_label}."
+        augmented = list(references)
+        for index, item in enumerate(references):
+            subsection = self._citation_subsection_label(item.citation)
+            if not subsection.startswith(child_prefix):
+                continue
+            parent_citation = re.sub(
+                rf"(\bsubsection\s+){re.escape(subsection)}\b",
+                rf"\g<1>{parent_label}",
+                item.citation,
+                flags=re.IGNORECASE,
+            )
+            if parent_citation == item.citation:
+                break
+            parent_item = item.model_copy(
+                update={
+                    "citation": parent_citation,
+                    "score": round(max(0.0, float(item.score) - 0.005), 4),
+                }
+            )
+            augmented.insert(index, parent_item)
+            break
+
+        deduped: list[ReferenceItem] = []
+        seen: set[str] = set()
+        for item in augmented:
+            key = item.citation.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(item)
+            if len(deduped) >= limit:
+                break
+        return deduped
+
+    def _prioritize_weather_minima_references(self, references: list[ReferenceItem], top_k: int) -> list[ReferenceItem]:
+        if not references:
+            return []
+
+        scored: list[tuple[float, ReferenceItem]] = []
+        for item in references:
+            text = f"{item.citation} {item.title} {item.text}".lower()
+            subsection = self._citation_subsection_label(item.citation)
+            score = float(item.score)
+            if subsection == "6.2":
+                score += 2.0
+            elif subsection.startswith("6.2."):
+                score += 1.2
+            if "enr 1.5 - 39" in item.citation.lower():
+                score += 0.8
+            if re.search(r"\bspecial\s+alternate\s+weather\s+minima\b", text):
+                score += 0.5
+            if item.regulation_type.upper() != "AIP":
+                score -= 1.2
+            scored.append((score, item))
+
+        ordered = [item for _, item in sorted(scored, key=lambda pair: pair[0], reverse=True)]
+        unique: list[ReferenceItem] = []
+        seen_labels: set[str] = set()
+        for item in ordered:
+            label = self._citation_subsection_label(item.citation) or item.citation.lower()
+            if label in seen_labels:
+                continue
+            seen_labels.add(label)
+            unique.append(item)
+            if len(unique) >= top_k:
+                break
+        return unique
+
     def _prioritize_qnh_references(
         self,
         references: list[ReferenceItem],
@@ -991,9 +1108,15 @@ class SearchService:
                         return label, expanded or block
 
         if query_profile.get("weather_minima_intent"):
+            preferred_labels = [label for label in WEATHER_MINIMA_PRIORITY_SUBSECTIONS if label in by_label]
+            for label in preferred_labels:
+                block = by_label[label]
+                if re.search(r"\b(?:special\s+)?alternate\s+weather\s+minima\b", block.lower()):
+                    expanded = self._expand_aip_subsection_block(blocks, label)
+                    return label, expanded or block
             for label, block in blocks:
-                heading_line = (block.splitlines()[0] if block.splitlines() else "").lower()
-                if re.search(r"\bspecial\s+alternate\s+weather\s+minima\b", heading_line):
+                block_lower = block.lower()
+                if re.search(r"\b(?:special\s+)?alternate\s+weather\s+minima\b", block_lower):
                     expanded = self._expand_aip_subsection_block(blocks, label)
                     return label, expanded or block
         if query_profile.get("qnh_intent"):
