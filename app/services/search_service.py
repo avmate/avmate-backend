@@ -218,7 +218,11 @@ class SearchService:
             and any(hint.startswith("enr 1.5") for hint in explicit_page_hints)
         )
         if explicit_special_weather_query:
-            references = self._ensure_special_weather_parent_reference(references, limit=top_k)
+            references = self._ensure_special_weather_parent_reference(
+                references,
+                limit=top_k,
+                prefer_special_phrase=True,
+            )
         if query_profile.get("qnh_intent"):
             references = self._prioritize_qnh_references(references, query_profile, top_k)
             references = self._ensure_parent_subsection_reference(references, parent_label="5.3", limit=top_k)
@@ -913,17 +917,63 @@ class SearchService:
         references: list[ReferenceItem],
         *,
         limit: int,
+        prefer_special_phrase: bool = False,
     ) -> list[ReferenceItem]:
         if not references:
             return []
 
         canonical_page_token = "enr 1.5 - 39"
+        special_phrase_pattern = re.compile(r"\bspecial\s+alternate\s+weather\s+minima\b", re.IGNORECASE)
+
+        def _has_special_weather_phrase(item: ReferenceItem) -> bool:
+            content = f"{item.title} {item.text}"
+            return bool(special_phrase_pattern.search(content))
+
+        def _promote_to_front(promoted_item: ReferenceItem) -> list[ReferenceItem]:
+            adjusted: list[ReferenceItem] = [promoted_item]
+            for candidate in references:
+                if candidate.citation.lower() == promoted_item.citation.lower():
+                    continue
+                adjusted.append(candidate)
+                if len(adjusted) >= limit:
+                    break
+            return adjusted
+
         has_canonical_parent = any(
             self._citation_subsection_label(item.citation) == "6.2" and canonical_page_token in item.citation.lower()
             for item in references
         )
-        if has_canonical_parent:
+        if has_canonical_parent and not prefer_special_phrase:
             return references[:limit]
+
+        if prefer_special_phrase:
+            for item in references:
+                subsection = self._citation_subsection_label(item.citation)
+                citation_lower = item.citation.lower()
+                if subsection == "6.2" and canonical_page_token in citation_lower and _has_special_weather_phrase(item):
+                    promoted_parent = item.model_copy(
+                        update={"score": round(max(0.0, float(item.score) + 0.001), 4)}
+                    )
+                    return _promote_to_front(promoted_parent)
+            for item in references:
+                subsection = self._citation_subsection_label(item.citation)
+                citation_lower = item.citation.lower()
+                if subsection.startswith("6.2.") and canonical_page_token in citation_lower and _has_special_weather_phrase(item):
+                    parent_citation = re.sub(
+                        rf"(\bsubsection\s+){re.escape(subsection)}\b",
+                        r"\g<1>6.2",
+                        item.citation,
+                        flags=re.IGNORECASE,
+                    )
+                    promoted_parent = item.model_copy(
+                        update={
+                            "citation": parent_citation,
+                            "score": round(max(0.0, float(item.score) + 0.001), 4),
+                        }
+                    )
+                    return _promote_to_front(promoted_parent)
+            if has_canonical_parent:
+                return references[:limit]
 
         promoted: ReferenceItem | None = None
         for item in references:
@@ -946,14 +996,7 @@ class SearchService:
         if promoted is None:
             return references[:limit]
 
-        adjusted: list[ReferenceItem] = [promoted]
-        for item in references:
-            if item.citation.lower() == promoted.citation.lower():
-                continue
-            adjusted.append(item)
-            if len(adjusted) >= limit:
-                break
-        return adjusted
+        return _promote_to_front(promoted)
 
     def _prioritize_weather_minima_references(self, references: list[ReferenceItem], top_k: int) -> list[ReferenceItem]:
         if not references:

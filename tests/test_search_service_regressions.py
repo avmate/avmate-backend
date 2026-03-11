@@ -104,6 +104,33 @@ class SearchServiceRegressionTests(unittest.TestCase):
         normalized = self.service._ensure_special_weather_parent_reference(references, limit=5)
         self.assertEqual(normalized[0].citation, "AIP ENR 1.5 - 39 subsection 6.2")
 
+    def test_ensure_special_weather_parent_reference_prefers_phrase_for_explicit_query(self) -> None:
+        references = [
+            _reference(
+                "AIP ENR 1.5 - 39 subsection 6.2.3",
+                text="6.2.3 Where there is a protracted unserviceability of approach aids.",
+                score=0.93,
+            ),
+            _reference(
+                "AIP ENR 1.5 - 39 subsection 6.2.1",
+                text="6.2.1 Special alternate weather minima are available for specified approaches.",
+                score=0.86,
+            ),
+            _reference(
+                "AIP ENR 1.5 - 38 subsection 6.2",
+                text="6.2 Special Alternate Weather Minima......................................ENR 1.5 - 39",
+                score=0.84,
+            ),
+        ]
+
+        normalized = self.service._ensure_special_weather_parent_reference(
+            references,
+            limit=5,
+            prefer_special_phrase=True,
+        )
+        self.assertEqual(normalized[0].citation, "AIP ENR 1.5 - 39 subsection 6.2")
+        self.assertIn("Special alternate weather minima", normalized[0].text)
+
     def test_combine_score_prefers_explicit_subsection_match(self) -> None:
         profile = self.service._build_query_profile("What does ENR 1.5 subsection 6.2 say?")
 
