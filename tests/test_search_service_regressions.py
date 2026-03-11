@@ -104,6 +104,10 @@ class SearchServiceRegressionTests(unittest.TestCase):
             citations.index("AIP ENR 1.5 - 38 subsection 5.3"),
             citations.index("AIP ENR 1.5 - 38 subsection 5.3.2"),
         )
+        parent_item = next(item for item in augmented if item.citation == "AIP ENR 1.5 - 38 subsection 5.3")
+        child_item = next(item for item in augmented if item.citation == "AIP ENR 1.5 - 38 subsection 5.3.2")
+        self.assertNotEqual(parent_item.text, child_item.text)
+        self.assertTrue(parent_item.text.startswith("5.3"))
 
     def test_prioritize_weather_minima_references_prefers_subsection_6_2(self) -> None:
         references = [
@@ -283,6 +287,42 @@ Additional notes unrelated to special alternate minima.
 
         selected = self.service._select_answer_reference(profile, references)
         self.assertEqual(selected.citation, "AIP ENR 1.5 - 39 subsection 6.2.1")
+
+    def test_plain_english_and_example_for_weather_minima_are_operational(self) -> None:
+        query = "What is the approach criteria for the Special Alternate Weather Minima?"
+        references = [
+            _reference(
+                "AIP ENR 1.5 - 39 subsection 6.2",
+                text="6.2 Special Alternate Weather Minima",
+                score=0.94,
+            ),
+            _reference(
+                "AIP ENR 1.5 - 39 subsection 6.2.1",
+                text="6.2.1 Special alternate weather minima are available for specified approaches with dual ILS/VOR approach capability.",
+                score=0.9,
+            ),
+            _reference(
+                "AIP ENR 1.5 - 39 subsection 6.2.2",
+                text="6.2.2 Special minima are identified on charts and not available if required MET/ATS services are unavailable.",
+                score=0.88,
+            ),
+            _reference(
+                "AIP ENR 1.5 - 39 subsection 6.2.3",
+                text="6.2.3 NOTAM advises non-availability or revision during prolonged aid/facility outages.",
+                score=0.86,
+            ),
+        ]
+        answer_reference = references[1]
+
+        plain_english = self.service._build_plain_english(query, answer_reference, references)
+        example = self.service._build_example(query, answer_reference, references)
+
+        self.assertIn("plain english", plain_english.lower())
+        self.assertIn("dual ils/vor", plain_english.lower())
+        self.assertIn("standard alternate minima", plain_english.lower())
+        self.assertIn("example:", example.lower())
+        self.assertIn("pilot", example.lower())
+        self.assertIn("notam", example.lower())
 
 
 if __name__ == "__main__":

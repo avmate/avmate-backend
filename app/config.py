@@ -63,6 +63,7 @@ class Settings:
     )
     anthropic_api_key: str | None = os.getenv("ANTHROPIC_API_KEY")
     enable_llm_answers: bool = _as_bool(os.getenv("ENABLE_LLM_ANSWERS"), default=False)
+    enable_llm_query_assist: bool = _as_bool(os.getenv("ENABLE_LLM_QUERY_ASSIST"), default=False)
     llm_model: str = os.getenv("LLM_MODEL", "claude-3-5-sonnet-latest")
     llm_timeout_seconds: int = int(os.getenv("LLM_TIMEOUT_SECONDS", "45"))
     llm_max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "1100"))

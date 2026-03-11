@@ -64,6 +64,7 @@ def get_search_service() -> SearchService:
         get_canonical_store(),
         llm_answer_service=get_llm_answer_service(),
         enable_llm_answers=settings.enable_llm_answers,
+        enable_llm_query_assist=settings.enable_llm_query_assist,
     )
 
 

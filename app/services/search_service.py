@@ -95,16 +95,43 @@ class SearchService:
         canonical_store: CanonicalStore,
         llm_answer_service: "LLMAnswerService | None" = None,
         enable_llm_answers: bool = False,
+        enable_llm_query_assist: bool = False,
     ) -> None:
         self._embeddings = embeddings
         self._vector_store = vector_store
         self._canonical_store = canonical_store
         self._llm_answer_service = llm_answer_service
         self._enable_llm_answers = enable_llm_answers
+        self._enable_llm_query_assist = enable_llm_query_assist
 
     def search(self, query: str, top_k: int, use_llm: bool = True) -> SearchResponse:
-        query_profile = self._build_query_profile(query)
-        query_embedding = self._embeddings.encode([query])
+        effective_query = query
+        query_profile = self._build_query_profile(effective_query)
+        if (
+            use_llm
+            and self._enable_llm_answers
+            and self._enable_llm_query_assist
+            and self._llm_answer_service
+            and self._llm_answer_service.enabled
+        ):
+            try:
+                query_assist = self._llm_answer_service.interpret_query(query)
+            except Exception:
+                query_assist = None
+            if query_assist:
+                effective_query = query_assist.get("rewritten_query") or query
+                query_profile = self._build_query_profile(effective_query)
+                assist_keywords = [
+                    term.strip().lower()
+                    for term in query_assist.get("keywords", [])
+                    if isinstance(term, str) and len(term.strip()) >= 3
+                ]
+                if assist_keywords:
+                    merged_terms = list(dict.fromkeys([*query_profile.get("terms", []), *assist_keywords]))
+                    query_profile["terms"] = merged_terms[:48]
+                query_profile["llm_query_assist_used"] = True
+
+        query_embedding = self._embeddings.encode([effective_query])
         if query_profile.get("strict_single_reference"):
             candidate_k = min(max(top_k * 24, 140), 260)
         else:
@@ -270,8 +297,8 @@ class SearchService:
         answer_reference = self._select_answer_reference(query_profile, references)
         answer = self._build_answer(query, answer_reference)
         legal_explanation = self._build_legal_explanation(query, references)
-        plain_english = self._build_plain_english(query, answer_reference)
-        example = self._build_example(query, answer_reference)
+        plain_english = self._build_plain_english(query, answer_reference, references)
+        example = self._build_example(query, answer_reference, references)
         study_questions = [
             f"What does {citations[0]} require in the exact wording of the regulation?",
             "Which conditions, exceptions, or definitions in the cited text could change the answer?",
@@ -287,6 +314,8 @@ class SearchService:
             "Extract the specific table value, limit, or radius from the verbatim source text and tie it back to the aircraft category or condition asked about.",
         ]
         contextual_notes = self._build_contextual_notes(query, references)
+        if query_profile.get("llm_query_assist_used"):
+            contextual_notes.append("LLM query-intent assist extracted retrieval keywords before search.")
         confidence = max(0, min(99, int(round(references[0].score * 100))))
         if self._query_targets_circling_minima(query):
             category = self._extract_aircraft_category(query)
@@ -810,9 +839,40 @@ class SearchService:
             lines.append(f"- {item.citation}: {sentence}")
         return "\n".join(lines)
 
-    def _build_plain_english(self, query: str, top_reference: ReferenceItem) -> str:
+    def _build_plain_english(
+        self,
+        query: str,
+        top_reference: ReferenceItem,
+        references: list[ReferenceItem],
+    ) -> str:
         flattened = " ".join(top_reference.text.split())
         query_lower = query.lower()
+        subsection_map: dict[str, ReferenceItem] = {}
+        for item in references:
+            label = self._citation_subsection_label(item.citation)
+            if label and label not in subsection_map:
+                subsection_map[label] = item
+
+        if "alternate" in query_lower and "weather" in query_lower and any(label.startswith("6.2") for label in subsection_map):
+            parts: list[str] = []
+            item_621 = subsection_map.get("6.2.1")
+            item_622 = subsection_map.get("6.2.2")
+            item_623 = subsection_map.get("6.2.3")
+            if item_621:
+                parts.append(
+                    "You can only use special alternate weather minima when the aircraft meets the dual ILS/VOR capability requirements listed in 6.2.1."
+                )
+            if item_622:
+                parts.append(
+                    "These minima are only available when chart and service conditions in 6.2.2 are met; if required services are unavailable, revert to standard alternate minima."
+                )
+            if item_623:
+                parts.append(
+                    "If approach aids or related facilities are unserviceable for a prolonged period, check NOTAM because special minima may be withdrawn or revised."
+                )
+            if parts:
+                return "In plain English: " + " ".join(parts)
+
         if "qnh" in query_lower:
             qnh_sources = []
             for token in ("AAIS", "ATC", "ATIS", "AWIS", "CA/GRS", "WATIR"):
@@ -846,9 +906,28 @@ class SearchService:
             "Then confirm any limits and exceptions in the cited reference text."
         )
 
-    def _build_example(self, query: str, top_reference: ReferenceItem) -> str:
+    def _build_example(
+        self,
+        query: str,
+        top_reference: ReferenceItem,
+        references: list[ReferenceItem],
+    ) -> str:
         flattened = " ".join(top_reference.text.split())
         query_lower = query.lower()
+        subsection_map: dict[str, ReferenceItem] = {}
+        for item in references:
+            label = self._citation_subsection_label(item.citation)
+            if label and label not in subsection_map:
+                subsection_map[label] = item
+
+        if "alternate" in query_lower and "weather" in query_lower and any(label.startswith("6.2") for label in subsection_map):
+            return (
+                "Example: A pilot is planning an IFR flight and wants to rely on special alternate weather minima at the destination alternate. "
+                "The pilot confirms the aircraft meets the dual ILS/VOR capability criteria in 6.2.1, checks that chart/service availability requirements in 6.2.2 are currently met, "
+                "and then checks NOTAM in case 6.2.3 conditions apply due to prolonged aid/facility outages. "
+                "If any of those checks fail, the pilot plans using standard alternate minima instead."
+            )
+
         if "qnh" in query_lower:
             return (
                 "Example: A pilot is flying IFR from Archerfield to Sunshine Coast and plans the RNP RWY 31 approach. "
@@ -911,6 +990,23 @@ class SearchService:
         match = re.search(r"\bAIP\s+([0-9]+(?:\.[0-9]+){1,4})\b", citation, re.IGNORECASE)
         return match.group(1) if match else ""
 
+    def _derive_parent_heading_text(self, parent_label: str, child_label: str, text: str) -> str:
+        lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+        if not lines:
+            return ""
+        first_line = " ".join(lines[0].split())
+        if not first_line:
+            return ""
+        normalized = re.sub(
+            rf"^\s*{re.escape(child_label)}\b",
+            parent_label,
+            first_line,
+            flags=re.IGNORECASE,
+        ).strip(" .")
+        if normalized and len(normalized) > 220:
+            normalized = normalized[:220].rsplit(" ", 1)[0]
+        return normalized
+
     def _ensure_parent_subsection_reference(
         self,
         references: list[ReferenceItem],
@@ -939,9 +1035,13 @@ class SearchService:
             )
             if parent_citation == item.citation:
                 break
+            parent_text = self._derive_parent_heading_text(parent_label, subsection, item.text)
+            parent_title = self._derive_parent_heading_text(parent_label, subsection, item.title)
             parent_item = item.model_copy(
                 update={
                     "citation": parent_citation,
+                    "title": parent_title or item.title,
+                    "text": parent_text or item.text,
                     "score": round(max(0.0, float(item.score) - 0.005), 4),
                 }
             )
@@ -1005,9 +1105,13 @@ class SearchService:
                         item.citation,
                         flags=re.IGNORECASE,
                     )
+                    parent_text = self._derive_parent_heading_text("6.2", subsection, item.text)
+                    parent_title = self._derive_parent_heading_text("6.2", subsection, item.title)
                     promoted_parent = item.model_copy(
                         update={
                             "citation": parent_citation,
+                            "title": parent_title or item.title,
+                            "text": parent_text or item.text,
                             "score": round(max(0.0, float(item.score) + 0.001), 4),
                         }
                     )

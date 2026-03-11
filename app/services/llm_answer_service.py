@@ -44,7 +44,7 @@ class LLMAnswerService:
             return None
 
         reference_blocks = []
-        for idx, ref in enumerate(references[:3], start=1):
+        for idx, ref in enumerate(references[:5], start=1):
             excerpt = " ".join(ref.text.split())
             excerpt = excerpt[:1800]
             reference_blocks.append(
@@ -58,7 +58,7 @@ class LLMAnswerService:
                 )
             )
 
-        allowed_citations = [ref.citation for ref in references[:3]]
+        allowed_citations = [ref.citation for ref in references[:5]]
         system_prompt = (
             "You are a legal aviation assistant. Use only the provided references. "
             "Do not invent any regulation content, citation, or number. "
@@ -72,13 +72,15 @@ class LLMAnswerService:
             "Return JSON object with keys:\n"
             "- answer (short, direct)\n"
             "- legal_explanation (short legal framing)\n"
-            "- plain_english (aviation plain language)\n"
-            "- example (operational scenario)\n"
+            "- plain_english (plain language interpretation of the regulatory meaning)\n"
+            "- example (short operational story grounded in the references)\n"
             "- study_questions (exactly 5 items)\n"
             "- study_answers (exactly 5 items)\n"
             "Constraints:\n"
             "- In answer, include the primary citation verbatim.\n"
             "- Use only allowed citations.\n"
+            "- plain_english must explain what the rule means in practical terms without adding facts not in references.\n"
+            "- example must be scenario-based, practical, and explicitly consistent with reference conditions.\n"
             "- Keep output concise and practical.\n"
         )
 
@@ -116,6 +118,77 @@ class LLMAnswerService:
 
         sanitized = self._sanitize_output(parsed, fallback_payload, allowed_citations)
         return sanitized
+
+    def interpret_query(self, query: str) -> dict[str, Any] | None:
+        if not self.enabled:
+            return None
+        query_clean = self._clean_text(query)
+        if not query_clean:
+            return None
+
+        system_prompt = (
+            "You classify aviation regulation queries for retrieval. "
+            "Do not answer the query. Extract intent and search wording only. "
+            "Return only valid JSON."
+        )
+        user_prompt = (
+            f"User query:\n{query_clean}\n\n"
+            "Return JSON object with keys:\n"
+            "- intent (short label)\n"
+            "- rewritten_query (clear retrieval-focused rewrite preserving original meaning)\n"
+            "- keywords (5 to 10 short search terms/phrases grounded in the query)\n"
+            "Constraints:\n"
+            "- Do not add facts not implied by the query.\n"
+            "- Keep rewritten_query under 240 characters.\n"
+            "- keywords must be plain strings.\n"
+        )
+
+        body = {
+            "model": self._model,
+            "max_tokens": min(420, self._max_tokens),
+            "temperature": 0,
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": user_prompt}],
+        }
+        headers = {
+            "x-api-key": self._api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+
+        response = self._http.post(
+            ANTHROPIC_MESSAGES_URL,
+            headers=headers,
+            json=body,
+            timeout=self._timeout_seconds,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        content_blocks = payload.get("content") or []
+        text_parts = [block.get("text", "") for block in content_blocks if isinstance(block, dict)]
+        raw_text = "\n".join(part for part in text_parts if part).strip()
+        if not raw_text:
+            return None
+
+        parsed = self._parse_json_block(raw_text)
+        if not parsed:
+            return None
+
+        rewritten_query = self._clean_text(parsed.get("rewritten_query")) or query_clean
+        intent = self._clean_text(parsed.get("intent"))
+        raw_keywords = parsed.get("keywords") if isinstance(parsed.get("keywords"), list) else []
+        keywords = [
+            self._clean_text(item).lower()
+            for item in raw_keywords
+            if isinstance(item, str) and len(self._clean_text(item)) >= 3
+        ]
+        keywords = list(dict.fromkeys(keywords))[:10]
+
+        return {
+            "intent": intent,
+            "rewritten_query": rewritten_query[:240],
+            "keywords": keywords,
+        }
 
     def _parse_json_block(self, raw_text: str) -> dict[str, Any] | None:
         candidate = raw_text.strip()
