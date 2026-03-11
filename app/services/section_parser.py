@@ -6,7 +6,7 @@ from typing import Iterable
 
 SECTION_PATTERN = re.compile(
     r"(?P<citation>"
-    r"(?:CASR|CAR|CAO|MOS|CAA)\s+(?:Part\s+)?[0-9A-Za-z.\-]+(?:\([0-9A-Za-z]+\))*"
+    r"(?:CASR|CAR|CAO|MOS|CAA)\s+(?:Part\s+)?(?:[0-9]+[0-9A-Za-z.\-]*)(?:\([0-9A-Za-z]+\))*"
     r"|CAO\s+DOC\s+[0-9A-Za-z.\-]+"
     r"|AIP\s+Australia\s+\d+(?:\.\d+)+"
     r"|AIP\s+\d+(?:\.\d+)+"
@@ -15,7 +15,7 @@ SECTION_PATTERN = re.compile(
 )
 CITATION_QUERY_PATTERN = re.compile(
     r"\b("
-    r"(?:CASR|CAR|CAO|MOS|CAA)\s+(?:Part\s+)?[0-9A-Za-z.\-]+(?:\([0-9A-Za-z]+\))*"
+    r"(?:CASR|CAR|CAO|MOS|CAA)\s+(?:Part\s+)?(?:[0-9]+[0-9A-Za-z.\-]*)(?:\([0-9A-Za-z]+\))*"
     r"|CAO\s+DOC\s+[0-9A-Za-z.\-]+"
     r"|AIP\s+Australia\s+\d+(?:\.\d+)+"
     r"|AIP\s+\d+(?:\.\d+)+"

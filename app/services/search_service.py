@@ -85,6 +85,15 @@ HEADING_ROLLUP_HINTS = (
     "explain",
     "what does",
 )
+NON_AIP_CITATION_PATTERN = re.compile(
+    r"^(?:CASR|CAR|CAO|MOS|CAA)\s+(?:Part\s+)?[0-9]+[0-9A-Za-z.\-]*(?:\([0-9A-Za-z]+\))*$|^CAO\s+DOC\s+[0-9A-Za-z.\-]+$",
+    re.IGNORECASE,
+)
+AIP_OUTPUT_CITATION_PATTERN = re.compile(
+    r"^AIP\s+(?:GEN|ENR|AD|AIP)\s+\d+(?:\.\d+)?\s*-\s*\(?\d+\)?\s+subsection\s+[0-9]+(?:\.[0-9]+){1,4}(?:\.\s*Table\s+\d+(?:\.\d+)*)?$",
+    re.IGNORECASE,
+)
+AIP_SOURCE_CITATION_PATTERN = re.compile(r"^AIP\s+[0-9]+(?:\.[0-9]+){1,4}$", re.IGNORECASE)
 
 
 class SearchService:
@@ -133,9 +142,9 @@ class SearchService:
 
         query_embedding = self._embeddings.encode([effective_query])
         if query_profile.get("strict_single_reference"):
-            candidate_k = min(max(top_k * 24, 140), 260)
+            candidate_k = min(max(top_k * 40, 220), 700)
         else:
-            candidate_k = min(max(top_k * 24, 120), 320)
+            candidate_k = min(max(top_k * 40, 200), 900)
         results = self._vector_store.query(query_embeddings=query_embedding, top_k=candidate_k)
         requested_citations = [citation.lower() for citation in extract_citations(query)]
 
@@ -271,6 +280,7 @@ class SearchService:
                 prefer_special_phrase=True,
             )
             references = self._dedupe_by_subsection_label(references, limit=top_k)
+        references = self._drop_malformed_citations(references, limit=top_k)
 
         if not references:
             return SearchResponse(
@@ -419,6 +429,21 @@ class SearchService:
             if label:
                 explicit_subsection_labels.append(label)
         explicit_subsection_labels = list(dict.fromkeys(explicit_subsection_labels))
+        cpl_intent = (
+            ("cpl" in query_lower)
+            or ("commercial pilot licence" in query_lower)
+            or ("commercial pilot license" in query_lower)
+        )
+        speed_limit_intent = (
+            ("speed" in query_lower or "knots" in query_lower or "kts" in query_lower)
+            and ("10000" in query_lower or "10,000" in query_lower or "10 000" in query_lower)
+        )
+        if cpl_intent:
+            terms.extend(["commercial", "pilot", "licence", "license", "cpl", "aeronautical", "experience", "hours", "part", "61"])
+            phrases.extend(["commercial pilot licence", "aeronautical experience"])
+        if speed_limit_intent:
+            terms.extend(["speed", "limit", "below", "10000", "10,000", "knots", "kts", "250"])
+            phrases.extend(["below 10000 feet", "below 10000 ft", "250 knots"])
 
         required_patterns: list[re.Pattern[str]] = []
         category_match = re.search(r"\bcat(?:egory)?\s*([abcd])\b", query_lower)
@@ -433,6 +458,14 @@ class SearchService:
         qnh_intent = "qnh" in query_lower
         if qnh_intent:
             required_patterns.append(re.compile(r"\bqnh\b", re.IGNORECASE))
+        if speed_limit_intent:
+            required_patterns.append(re.compile(r"\b(?:speed|knots|kts)\b", re.IGNORECASE))
+            required_patterns.append(re.compile(r"\b(?:10000|10,000|10 000|10\s*000)\b", re.IGNORECASE))
+            required_patterns.append(re.compile(r"\b(?:250)\b", re.IGNORECASE))
+        if cpl_intent:
+            required_patterns.append(re.compile(r"\b(?:commercial|cpl)\b", re.IGNORECASE))
+            required_patterns.append(re.compile(r"\b(?:pilot)\b", re.IGNORECASE))
+            required_patterns.append(re.compile(r"\b(?:hours|experience)\b", re.IGNORECASE))
         weather_minima_intent = (
             ("alternate" in query_lower)
             and ("weather" in query_lower)
@@ -474,6 +507,16 @@ class SearchService:
                 "atc",
                 "aais",
                 "watir",
+                "speed",
+                "kts",
+                "knots",
+                "hour",
+                "hours",
+                "experience",
+                "commercial",
+                "licence",
+                "license",
+                "cpl",
             )
             if token in query_lower
         ]
@@ -507,6 +550,8 @@ class SearchService:
             "special_weather_minima_intent": special_weather_minima_intent,
             "aip_preferred_intent": aip_preferred_intent,
             "qnh_intent": qnh_intent,
+            "cpl_intent": cpl_intent,
+            "speed_limit_intent": speed_limit_intent,
             "explicit_subsection_labels": explicit_subsection_labels,
             "explicit_page_hints": explicit_page_hints,
             "heading_rollup_intent": heading_rollup_intent,
@@ -533,6 +578,8 @@ class SearchService:
         qnh_intent = bool(query_profile.get("qnh_intent"))
         weather_minima_intent = bool(query_profile.get("weather_minima_intent"))
         special_weather_minima_intent = bool(query_profile.get("special_weather_minima_intent"))
+        cpl_intent = bool(query_profile.get("cpl_intent"))
+        speed_limit_intent = bool(query_profile.get("speed_limit_intent"))
         explicit_subsection_labels = query_profile.get("explicit_subsection_labels", [])
         explicit_page_hints = query_profile.get("explicit_page_hints", [])
 
@@ -569,6 +616,17 @@ class SearchService:
         )
         qnh_evidence = bool(re.search(r"\bqnh\b", document_lower) or re.search(r"\bqnh\b", citation_lower))
         weather_phrase_hit = bool(re.search(r"\bspecial\s+alternate\s+weather\s+minima\b", document_lower))
+        cpl_evidence = bool(
+            re.search(r"\bcommercial\b", document_lower)
+            and re.search(r"\bpilot\b", document_lower)
+            and re.search(r"\b(?:hours|experience)\b", document_lower)
+        )
+        speed_limit_evidence = bool(
+            re.search(r"\b(?:250)\b", document_lower)
+            and re.search(r"\b(?:knots|kts|kt)\b", document_lower)
+            and re.search(r"\b(?:10000|10,000|10 000|10\s*000)\b", document_lower)
+        )
+        precise_citation = self._is_precise_source_citation(citation, regulation_type)
         toc_penalty = self._table_of_contents_penalty(document)
 
         passes_gate = citation_exact or citation_mentioned
@@ -581,6 +639,10 @@ class SearchService:
             if strict_single_reference and not circling_table_evidence and semantic_score < 0.8:
                 passes_gate = False
             if qnh_intent and not qnh_evidence and semantic_score < 0.9:
+                passes_gate = False
+            if cpl_intent and not cpl_evidence and semantic_score < 0.9:
+                passes_gate = False
+            if speed_limit_intent and not speed_limit_evidence and semantic_score < 0.9:
                 passes_gate = False
             if explicit_subsection_labels and not explicit_subsection_match and semantic_score < 0.94:
                 passes_gate = False
@@ -598,6 +660,8 @@ class SearchService:
             if toc_penalty >= 0.2 and semantic_score < 0.85:
                 passes_gate = False
             if aip_preferred_intent and not is_aip_result and semantic_score < 0.92:
+                passes_gate = False
+            if not precise_citation and semantic_score < 0.99:
                 passes_gate = False
 
         score = semantic_score * 0.62
@@ -625,6 +689,10 @@ class SearchService:
             score -= 0.15
         if qnh_intent:
             score += 0.12 if qnh_evidence else -0.2
+        if cpl_intent:
+            score += 0.2 if cpl_evidence else -0.24
+        if speed_limit_intent:
+            score += 0.24 if speed_limit_evidence else -0.26
         if explicit_subsection_labels:
             score += 0.24 if explicit_subsection_match else -0.22
         if explicit_page_hints:
@@ -640,6 +708,8 @@ class SearchService:
                 score += 0.16 if weather_phrase_hit else -0.16
         if aip_preferred_intent and not is_aip_result:
             score -= 0.35
+        if not precise_citation:
+            score -= 0.45
         score -= toc_penalty
 
         return max(0.0, min(1.0, score)), passes_gate
@@ -688,7 +758,7 @@ class SearchService:
 
         sections = self._canonical_store.search_sections_by_terms(
             query_terms,
-            limit=5000,
+            limit=12000,
             regulation_type=regulation_hint,
         )
         if not sections:
@@ -699,6 +769,8 @@ class SearchService:
         intent_tokens = query_profile.get("intent_tokens", [])
         numeric_intent = bool(query_profile.get("numeric_intent"))
         qnh_intent = bool(query_profile.get("qnh_intent"))
+        cpl_intent = bool(query_profile.get("cpl_intent"))
+        speed_limit_intent = bool(query_profile.get("speed_limit_intent"))
         explicit_subsection_labels = query_profile.get("explicit_subsection_labels", [])
         explicit_page_hints = query_profile.get("explicit_page_hints", [])
 
@@ -706,6 +778,8 @@ class SearchService:
         for section in sections:
             raw_citation = str(section.get("citation", "Unknown") or "Unknown")
             regulation_type = str(section.get("regulation_type", "UNKNOWN") or "UNKNOWN")
+            if not self._is_precise_source_citation(raw_citation, regulation_type):
+                continue
             canonical_text = str(section.get("text", "") or "")
             if not canonical_text.strip():
                 continue
@@ -747,6 +821,16 @@ class SearchService:
             toc_penalty = self._table_of_contents_penalty(canonical_text)
             numeric_evidence = bool(re.search(r"\b\d+(?:\.\d+)?\s*(?:nm|ft|m|kts|kt|hpa)\b", text_lower))
             qnh_evidence = "qnh" in text_lower or "qnh" in citation_lower
+            cpl_evidence = bool(
+                ("commercial" in text_lower or "cpl" in text_lower)
+                and "pilot" in text_lower
+                and ("hours" in text_lower or "experience" in text_lower)
+            )
+            speed_limit_evidence = bool(
+                re.search(r"\b(?:250)\b", text_lower)
+                and re.search(r"\b(?:knots|kts|kt)\b", text_lower)
+                and re.search(r"\b(?:10000|10,000|10 000|10\s*000)\b", text_lower)
+            )
             subsection = self._citation_subsection_label(citation)
             explicit_subsection_match = any(
                 subsection == label or subsection.startswith(f"{label}.")
@@ -773,6 +857,10 @@ class SearchService:
                     score += 0.12
                 if subsection == "1.4.1":
                     score += 0.14
+            if cpl_intent:
+                score += 0.24 if cpl_evidence else -0.28
+            if speed_limit_intent:
+                score += 0.28 if speed_limit_evidence else -0.3
             if explicit_subsection_labels:
                 score += 0.24 if explicit_subsection_match else -0.24
             if explicit_page_hints:
@@ -996,6 +1084,36 @@ class SearchService:
             return match.group(1)
         match = re.search(r"\bAIP\s+([0-9]+(?:\.[0-9]+){1,4})\b", citation, re.IGNORECASE)
         return match.group(1) if match else ""
+
+    def _is_precise_citation(self, citation: str, regulation_type: str) -> bool:
+        normalized = " ".join((citation or "").split())
+        if not normalized:
+            return False
+        if str(regulation_type or "").upper() == "AIP":
+            if "subsection" not in normalized.lower():
+                return False
+            return bool(AIP_OUTPUT_CITATION_PATTERN.match(normalized))
+        return bool(NON_AIP_CITATION_PATTERN.match(normalized))
+
+    def _is_precise_source_citation(self, citation: str, regulation_type: str) -> bool:
+        normalized = " ".join((citation or "").split())
+        if not normalized:
+            return False
+        if str(regulation_type or "").upper() == "AIP":
+            return bool(AIP_SOURCE_CITATION_PATTERN.match(normalized))
+        return bool(NON_AIP_CITATION_PATTERN.match(normalized))
+
+    def _drop_malformed_citations(self, references: list[ReferenceItem], *, limit: int) -> list[ReferenceItem]:
+        if not references:
+            return []
+        filtered: list[ReferenceItem] = []
+        for item in references:
+            if not self._is_precise_citation(item.citation, item.regulation_type):
+                continue
+            filtered.append(item)
+            if len(filtered) >= limit:
+                break
+        return filtered
 
     def _derive_parent_heading_text(self, parent_label: str, child_label: str, text: str) -> str:
         lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]

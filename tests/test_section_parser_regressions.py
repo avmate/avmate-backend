@@ -17,6 +17,12 @@ class SectionParserRegressionTests(unittest.TestCase):
         self.assertIn("AIP 1.4.1", citations)
         self.assertIn("AIP 5.3", citations)
 
+    def test_extract_citations_ignores_non_numeric_cao_car_tokens(self) -> None:
+        query = "CAO level standards and CAR do not apply."
+        citations = extract_citations(query)
+        self.assertNotIn("CAO level", citations)
+        self.assertNotIn("CAR do", citations)
+
 
 if __name__ == "__main__":
     unittest.main()

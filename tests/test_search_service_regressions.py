@@ -330,6 +330,25 @@ Additional notes unrelated to special alternate minima.
         self.assertIn("Sentence one. Second sentence.", formatted)
         self.assertIn("\n\n- bullet one\n- bullet two", formatted)
 
+    def test_is_precise_citation_rejects_malformed_non_aip_tokens(self) -> None:
+        self.assertFalse(self.service._is_precise_citation("CAO level", "CAO"))
+        self.assertFalse(self.service._is_precise_citation("CAR do", "CAR"))
+        self.assertTrue(self.service._is_precise_citation("CASR Part 61", "CASR"))
+
+    def test_drop_malformed_citations_filters_invalid_items(self) -> None:
+        refs = [
+            _reference("CAO level", text="Invalid citation text", regulation_type="CAO", score=0.91),
+            _reference(
+                "AIP ENR 1.5 - 39 subsection 6.2",
+                text="Valid AIP citation text",
+                regulation_type="AIP",
+                score=0.9,
+            ),
+        ]
+        filtered = self.service._drop_malformed_citations(refs, limit=5)
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(filtered[0].citation, "AIP ENR 1.5 - 39 subsection 6.2")
+
 
 if __name__ == "__main__":
     unittest.main()
