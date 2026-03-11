@@ -210,6 +210,7 @@ class SearchService:
         if query_profile.get("weather_minima_intent"):
             references = self._prioritize_weather_minima_references(references, top_k)
             references = self._ensure_parent_subsection_reference(references, parent_label="6.2", limit=top_k)
+            references = self._ensure_special_weather_parent_reference(references, limit=top_k)
         if query_profile.get("qnh_intent"):
             references = self._prioritize_qnh_references(references, query_profile, top_k)
             references = self._ensure_parent_subsection_reference(references, parent_label="5.3", limit=top_k)
@@ -898,6 +899,53 @@ class SearchService:
             if len(deduped) >= limit:
                 break
         return deduped
+
+    def _ensure_special_weather_parent_reference(
+        self,
+        references: list[ReferenceItem],
+        *,
+        limit: int,
+    ) -> list[ReferenceItem]:
+        if not references:
+            return []
+
+        canonical_page_token = "enr 1.5 - 39"
+        has_canonical_parent = any(
+            self._citation_subsection_label(item.citation) == "6.2" and canonical_page_token in item.citation.lower()
+            for item in references
+        )
+        if has_canonical_parent:
+            return references[:limit]
+
+        promoted: ReferenceItem | None = None
+        for item in references:
+            subsection = self._citation_subsection_label(item.citation)
+            citation_lower = item.citation.lower()
+            if subsection.startswith("6.2.") and canonical_page_token in citation_lower:
+                parent_citation = re.sub(
+                    rf"(\bsubsection\s+){re.escape(subsection)}\b",
+                    r"\g<1>6.2",
+                    item.citation,
+                    flags=re.IGNORECASE,
+                )
+                promoted = item.model_copy(
+                    update={
+                        "citation": parent_citation,
+                        "score": round(max(0.0, float(item.score) + 0.001), 4),
+                    }
+                )
+                break
+        if promoted is None:
+            return references[:limit]
+
+        adjusted: list[ReferenceItem] = [promoted]
+        for item in references:
+            if item.citation.lower() == promoted.citation.lower():
+                continue
+            adjusted.append(item)
+            if len(adjusted) >= limit:
+                break
+        return adjusted
 
     def _prioritize_weather_minima_references(self, references: list[ReferenceItem], top_k: int) -> list[ReferenceItem]:
         if not references:

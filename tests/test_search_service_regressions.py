@@ -87,6 +87,23 @@ class SearchServiceRegressionTests(unittest.TestCase):
         self.assertGreaterEqual(len(ranked), 2)
         self.assertEqual(ranked[0].citation, "AIP ENR 1.5 - 39 subsection 6.2")
 
+    def test_ensure_special_weather_parent_reference_promotes_page_39_parent(self) -> None:
+        references = [
+            _reference(
+                "AIP ENR 1.5 - 38 subsection 6.2",
+                text="6.2 Alternate minima section",
+                score=0.91,
+            ),
+            _reference(
+                "AIP ENR 1.5 - 39 subsection 6.2.2",
+                text="6.2.2 Special alternate weather minima are identified on charts.",
+                score=0.89,
+            ),
+        ]
+
+        normalized = self.service._ensure_special_weather_parent_reference(references, limit=5)
+        self.assertEqual(normalized[0].citation, "AIP ENR 1.5 - 39 subsection 6.2")
+
     def test_combine_score_prefers_explicit_subsection_match(self) -> None:
         profile = self.service._build_query_profile("What does ENR 1.5 subsection 6.2 say?")
 
