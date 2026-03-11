@@ -159,6 +159,7 @@ class SearchService:
                 regulation_type=regulation_type,
                 semantic_score=semantic_score,
                 requested_citations=requested_citations,
+                page_ref=page_ref,
             )
             reference = ReferenceItem(
                 section_id=section_id,
@@ -315,6 +316,11 @@ class SearchService:
         explicit_subsection_labels = [
             label for label in re.findall(r"\b(?:subsection|section)\s+([1-9]\d?(?:\.\d+){1,4})\b", query_lower)
         ]
+        explicit_page_hints = [
+            " ".join(match.group(1).split())
+            for match in re.finditer(r"\b((?:gen|enr|ad)\s+\d+(?:\.\d+)?)\b", query_lower)
+        ]
+        explicit_page_hints = list(dict.fromkeys(explicit_page_hints))
         for citation in extract_citations(query):
             label = self._citation_subsection_label(citation)
             if label:
@@ -406,6 +412,7 @@ class SearchService:
             "aip_preferred_intent": aip_preferred_intent,
             "qnh_intent": qnh_intent,
             "explicit_subsection_labels": explicit_subsection_labels,
+            "explicit_page_hints": explicit_page_hints,
         }
 
     def _combine_score(
@@ -416,6 +423,7 @@ class SearchService:
         regulation_type: str,
         semantic_score: float,
         requested_citations: list[str],
+        page_ref: str = "",
     ) -> tuple[float, bool]:
         query_lower = query_profile["query_lower"]
         terms = query_profile["terms"]
@@ -429,6 +437,7 @@ class SearchService:
         weather_minima_intent = bool(query_profile.get("weather_minima_intent"))
         special_weather_minima_intent = bool(query_profile.get("special_weather_minima_intent"))
         explicit_subsection_labels = query_profile.get("explicit_subsection_labels", [])
+        explicit_page_hints = query_profile.get("explicit_page_hints", [])
 
         citation_lower = citation.lower()
         document_lower = document.lower()
@@ -438,6 +447,8 @@ class SearchService:
             citation_subsection == label or citation_subsection.startswith(f"{label}.")
             for label in explicit_subsection_labels
         )
+        page_ref_lower = " ".join((page_ref or "").split()).lower()
+        explicit_page_hint_match = any(page_ref_lower.startswith(hint) for hint in explicit_page_hints)
 
         citation_exact = any(requested == citation_lower for requested in requested_citations)
         citation_mentioned = bool(citation_lower) and citation_lower in query_lower
@@ -475,6 +486,8 @@ class SearchService:
             if qnh_intent and not qnh_evidence and semantic_score < 0.9:
                 passes_gate = False
             if explicit_subsection_labels and not explicit_subsection_match and semantic_score < 0.94:
+                passes_gate = False
+            if explicit_page_hints and not explicit_page_hint_match and semantic_score < 0.97:
                 passes_gate = False
             if weather_minima_intent:
                 if citation_subsection == "6.2":
@@ -517,6 +530,8 @@ class SearchService:
             score += 0.12 if qnh_evidence else -0.2
         if explicit_subsection_labels:
             score += 0.24 if explicit_subsection_match else -0.22
+        if explicit_page_hints:
+            score += 0.28 if explicit_page_hint_match else -0.32
         if weather_minima_intent:
             if citation_subsection == "6.2":
                 score += 0.3
@@ -548,6 +563,7 @@ class SearchService:
                 regulation_type=item.regulation_type,
                 semantic_score=semantic_score,
                 requested_citations=requested_citations,
+                page_ref=item.page_ref,
             )
             if strict_rescue and not passes_gate:
                 continue
@@ -587,6 +603,7 @@ class SearchService:
         numeric_intent = bool(query_profile.get("numeric_intent"))
         qnh_intent = bool(query_profile.get("qnh_intent"))
         explicit_subsection_labels = query_profile.get("explicit_subsection_labels", [])
+        explicit_page_hints = query_profile.get("explicit_page_hints", [])
 
         ranked: list[tuple[float, ReferenceItem]] = []
         for section in sections:
@@ -638,6 +655,8 @@ class SearchService:
                 subsection == label or subsection.startswith(f"{label}.")
                 for label in explicit_subsection_labels
             )
+            page_ref_lower = " ".join((page_ref or "").split()).lower()
+            explicit_page_hint_match = any(page_ref_lower.startswith(hint) for hint in explicit_page_hints)
 
             if required_patterns and not required_ok:
                 continue
@@ -659,6 +678,8 @@ class SearchService:
                     score += 0.14
             if explicit_subsection_labels:
                 score += 0.24 if explicit_subsection_match else -0.24
+            if explicit_page_hints:
+                score += 0.32 if explicit_page_hint_match else -0.34
             if any(requested == citation_lower for requested in requested_citations):
                 score += 0.2
             score -= toc_penalty

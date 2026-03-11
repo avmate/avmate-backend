@@ -93,18 +93,20 @@ class SearchServiceRegressionTests(unittest.TestCase):
         match_score, match_passes = self.service._combine_score(
             query_profile=profile,
             document="6.2 Special Alternate Weather Minima apply in specified chart conditions.",
-            citation="AIP 6.2.2",
+            citation="AIP 6.2",
             regulation_type="AIP",
             semantic_score=0.62,
             requested_citations=[],
+            page_ref="ENR 1.5 - 39",
         )
         miss_score, miss_passes = self.service._combine_score(
             query_profile=profile,
-            document="5.1 Unrelated reporting procedures and administrative notes.",
-            citation="AIP 5.1",
+            document="6.2 Unrelated section from a different ENR chapter.",
+            citation="AIP 6.2",
             regulation_type="AIP",
             semantic_score=0.62,
             requested_citations=[],
+            page_ref="ENR 1.10 - 12",
         )
 
         self.assertTrue(match_passes)
