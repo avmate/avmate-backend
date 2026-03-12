@@ -26,6 +26,7 @@ RETRY_DELAY_SECONDS = float(os.getenv("AVMATE_CASE_RETRY_DELAY_SECONDS", "8"))
 QUERY_DELAY_SECONDS = float(os.getenv("AVMATE_QUERY_DELAY_SECONDS", "0.55"))
 TOP_K = int(os.getenv("AVMATE_RANDOM_QUERY_TOP_K", "5"))
 REPORT_PATH = Path(os.getenv("AVMATE_RANDOM_QUERY_REPORT", "stress_random_queries_report.json"))
+MIN_QUERIES_PER_MANUAL = int(os.getenv("AVMATE_MIN_QUERIES_PER_MANUAL", "1"))
 
 NON_AIP_CITATION_PATTERN = re.compile(
     r"^(?:CASR|CAR|CAO|MOS|CAA)\s+(?:Part\s+)?[0-9]+[0-9A-Za-z.\-]*(?:\([0-9A-Za-z]+\))*$|^CAO\s+DOC\s+[0-9A-Za-z.\-]+$",
@@ -43,6 +44,7 @@ class QueryCase:
     query: str
     expected_citation: str
     regulation_type: str
+    source_file: str
 
 
 @dataclass
@@ -116,7 +118,23 @@ def build_query_case(row: RegulationSection) -> QueryCase | None:
             f"Explain {expected} in plain english.",
         ]
 
-    return QueryCase(query=random.choice(templates), expected_citation=expected, regulation_type=regulation_type)
+    return QueryCase(
+        query=random.choice(templates),
+        expected_citation=expected,
+        regulation_type=regulation_type,
+        source_file=normalize_spaces(row.source_file),
+    )
+
+
+def _sample_manual_rows(rows: list[RegulationSection], n: int) -> list[RegulationSection]:
+    if not rows or n <= 0:
+        return []
+    if len(rows) >= n:
+        return random.sample(rows, n)
+    sampled = list(rows)
+    while len(sampled) < n:
+        sampled.append(random.choice(rows))
+    return sampled
 
 
 def load_random_sections(count: int) -> list[RegulationSection]:
@@ -136,7 +154,46 @@ def load_random_sections(count: int) -> list[RegulationSection]:
         usable.append(row)
     if not usable:
         return []
-    return [random.choice(usable) for _ in range(count)]
+
+    by_manual: dict[str, list[RegulationSection]] = {}
+    for row in usable:
+        manual_key = normalize_spaces(row.source_file) or "unknown_source"
+        by_manual.setdefault(manual_key, []).append(row)
+    manual_keys = list(by_manual.keys())
+    random.shuffle(manual_keys)
+
+    if not manual_keys:
+        return [random.choice(usable) for _ in range(count)]
+
+    selected: list[RegulationSection] = []
+    guaranteed_per_manual = max(1, MIN_QUERIES_PER_MANUAL)
+    guaranteed_total = len(manual_keys) * guaranteed_per_manual
+    if count >= guaranteed_total:
+        for manual_key in manual_keys:
+            selected.extend(_sample_manual_rows(by_manual[manual_key], guaranteed_per_manual))
+    else:
+        # If query budget is lower than total manuals, still maximize manual coverage.
+        for manual_key in manual_keys:
+            if len(selected) >= count:
+                break
+            selected.extend(_sample_manual_rows(by_manual[manual_key], 1))
+
+    if len(selected) > count:
+        random.shuffle(selected)
+        selected = selected[:count]
+
+    weighted_manual_keys: list[str] = []
+    for manual_key, manual_rows in by_manual.items():
+        weight = min(25, max(1, len(manual_rows)))
+        weighted_manual_keys.extend([manual_key] * weight)
+    if not weighted_manual_keys:
+        weighted_manual_keys = manual_keys
+
+    while len(selected) < count:
+        manual_key = random.choice(weighted_manual_keys)
+        selected.append(random.choice(by_manual[manual_key]))
+    random.shuffle(selected)
+    return selected[:count]
 
 
 def query_api(case: QueryCase) -> QueryResult:
@@ -246,11 +303,14 @@ def main() -> int:
     print(f"Target URL: {BASE_URL}")
     print(f"Target accuracy: {TARGET_ACCURACY:.2%}")
     print(f"Queries per round: {QUERY_COUNT}")
+    print(f"Minimum per manual: {MIN_QUERIES_PER_MANUAL}")
 
     sampled_rows = load_random_sections(QUERY_COUNT)
     if not sampled_rows:
         print("No usable indexed sections found for stress generation.")
         return 1
+    manuals = sorted({normalize_spaces(row.source_file) or "unknown_source" for row in sampled_rows})
+    print(f"Manuals covered in sample set: {len(manuals)}")
 
     all_rounds: list[dict] = []
     for round_number in range(1, MAX_ROUNDS + 1):
@@ -262,6 +322,8 @@ def main() -> int:
         if not cases:
             print("No query cases generated.")
             return 1
+        manual_case_counts = Counter(case.source_file or "unknown_source" for case in cases)
+        print(f"Round {round_number} manual coverage: {len(manual_case_counts)} manuals")
 
         accuracy, results = run_round(round_number, cases)
         reason_counts = Counter(result.reason for result in results)
@@ -284,6 +346,7 @@ def main() -> int:
                 "round": round_number,
                 "accuracy": accuracy,
                 "reason_counts": dict(reason_counts),
+                "manual_case_counts": dict(manual_case_counts),
                 "failed_examples": failed_examples,
             }
         )
@@ -292,6 +355,8 @@ def main() -> int:
                 {
                     "base_url": BASE_URL,
                     "query_count": QUERY_COUNT,
+                    "manual_count": len(manuals),
+                    "manuals": manuals,
                     "target_accuracy": TARGET_ACCURACY,
                     "rounds": all_rounds,
                 },
@@ -310,4 +375,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

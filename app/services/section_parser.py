@@ -32,6 +32,15 @@ PAGE_PATTERN = re.compile(r"\b(?:GEN|ENR|AD|AIP)\s+\d+(?:\.\d+)?\s*-\s*\(?\d+\)?
 AIP_SUBSECTION_PATTERN = re.compile(
     r"(?m)^(?P<label>\d+(?:\.\d+){1,4})\s+(?P<heading>[A-Za-z][^\n]{0,220})$"
 )
+LEGISLATION_HEADING_PATTERN = re.compile(
+    r"(?m)^(?P<label>\d{1,3}(?:\.\d{1,3}){0,4}[A-Za-z]?(?:\([0-9A-Za-z]+\))?)\s+"
+    r"(?P<heading>[A-Z][^\n]{2,220})$"
+)
+LEGISLATION_PREFIX_PATTERN = re.compile(r"\b(CASR|CAR|CAO|MOS|CAA)\b", re.IGNORECASE)
+LEGISLATION_PAGE_NOISE_PATTERN = re.compile(
+    r"(?:compilation\s+no\.|authorised\s+version|registered\s+\d{1,2}/\d{1,2}/\d{4})",
+    re.IGNORECASE,
+)
 
 
 def _normalize_ref(value: str) -> str:
@@ -81,6 +90,17 @@ def derive_precise_citation(section_text: str, fallback: str) -> str:
     cao_doc_match = re.search(r"\bCAO\s+DOC\s+([0-9A-Za-z.\-]+)\b", leading_text, re.IGNORECASE)
     if cao_doc_match:
         return f"CAO DOC {cao_doc_match.group(1)}"
+
+    fallback_prefix_match = re.match(r"^(CASR|CAR|CAO|MOS|CAA)\b", normalize_citation(fallback), re.IGNORECASE)
+    if fallback_prefix_match:
+        heading_match = re.search(
+            r"(?m)^(?P<label>\d{1,3}(?:\.\d{1,3}){0,4}[A-Za-z]?(?:\([0-9A-Za-z]+\))?)\s+[A-Z]",
+            section_text[:1600],
+        )
+        if heading_match:
+            label = heading_match.group("label")
+            if "." in label or len(re.sub(r"\D", "", label)) >= 2:
+                return f"{fallback_prefix_match.group(1).upper()} {label}"
 
     normalized = normalize_citation(fallback)
     if re.search(r"\d", normalized):
@@ -161,6 +181,10 @@ def split_into_sections(text: str, regulation_type: str = "") -> list[dict]:
         if aip_sections:
             return aip_sections
 
+    legislation_sections = _split_legislation_sections(text, regulation_type)
+    if legislation_sections:
+        return legislation_sections
+
     matches = list(SECTION_PATTERN.finditer(text))
     if not matches:
         return []
@@ -216,6 +240,105 @@ def _split_aip_sections(text: str) -> list[dict]:
                 "text": section_text,
             }
         )
+    return sections
+
+
+def _infer_legislation_prefix(text: str, regulation_type: str) -> str:
+    candidate = (regulation_type or "").strip().upper()
+    if candidate in {"CASR", "CAR", "CAO", "MOS", "CAA"}:
+        return candidate
+    match = LEGISLATION_PREFIX_PATTERN.search(text[:2000])
+    return match.group(1).upper() if match else ""
+
+
+def _looks_like_legislation_heading(label: str, heading: str) -> bool:
+    compact_heading = " ".join((heading or "").split())
+    if not compact_heading or not re.search(r"[A-Za-z]{2,}", compact_heading):
+        return False
+    if "." not in label and len(re.sub(r"\D", "", label)) < 2:
+        return False
+    heading_lower = compact_heading.lower()
+    noisy_prefixes = (
+        "civil aviation safety regulations",
+        "table of contents",
+        "compilation no",
+        "authorised version",
+        "part ",
+        "subpart ",
+        "regulation ",
+    )
+    if heading_lower.startswith(noisy_prefixes):
+        return False
+    if "....." in compact_heading:
+        return False
+    return True
+
+
+def _looks_like_toc_block(section_text: str) -> bool:
+    lower = section_text[:900].lower()
+    if "table of contents" in lower:
+        return True
+    if LEGISLATION_PAGE_NOISE_PATTERN.search(lower):
+        return True
+
+    lines = [line.strip() for line in section_text.splitlines()[:28] if line.strip()]
+    if not lines:
+        return False
+    toc_like = sum(
+        1
+        for line in lines
+        if re.match(r"^\d{1,3}(?:\.\d{1,3}){0,4}[A-Za-z]?(?:\([0-9A-Za-z]+\))?\s+\S", line)
+        and not re.search(r"[.!?]\s", line)
+    )
+    prose_like = sum(
+        1
+        for line in lines
+        if len(line) >= 90 and re.search(r"[a-z]{3,}", line) and re.search(r"[.!?]", line)
+    )
+    return toc_like >= 4 and prose_like <= 1
+
+
+def _split_legislation_sections(text: str, regulation_type: str) -> list[dict]:
+    prefix = _infer_legislation_prefix(text, regulation_type)
+    if not prefix:
+        return []
+
+    matches = list(LEGISLATION_HEADING_PATTERN.finditer(text))
+    if len(matches) < 3:
+        return []
+
+    sections: list[dict] = []
+    for index, match in enumerate(matches):
+        label = match.group("label")
+        heading = " ".join(match.group("heading").split()).strip(" .:-")
+        if not _looks_like_legislation_heading(label, heading):
+            continue
+
+        start = match.start()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        section_text = text[start:end].strip()
+        if len(section_text) < 120:
+            continue
+        if _looks_like_toc_block(section_text):
+            continue
+
+        citation = f"{prefix} {label}"
+        title = f"{citation} {heading}".strip()[:160]
+        sections.append(
+            {
+                "regulation_id": citation,
+                "citation": citation,
+                "title": title,
+                "part": infer_part(citation),
+                "section_label": label,
+                "page_ref": extract_page_ref(section_text, full_text=text, section_start=start),
+                "table_ref": extract_table_ref(section_text),
+                "text": section_text,
+            }
+        )
+
+    if len(sections) < 5:
+        return []
     return sections
 
 
