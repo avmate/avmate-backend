@@ -367,6 +367,35 @@ Additional notes unrelated to special alternate minima.
         self.assertTrue(filtered)
         self.assertEqual(filtered[0].citation, "AIP ENR 1.5 - 39 subsection 6.2")
 
+    def test_explicit_subsection_seed_references_prefers_matching_page_hint(self) -> None:
+        service = SearchService(
+            embeddings=None,
+            vector_store=None,
+            canonical_store=_StubCanonicalStore(
+                [
+                    _section(
+                        "AIP 6.2",
+                        title="AIP 6.2 Radio Failure Procedure",
+                        text="6.2 Radio Failure Procedure for communications contingencies.",
+                        page_ref="ENR 1.6 - 5",
+                        regulation_type="AIP",
+                    ),
+                    _section(
+                        "AIP 6.2",
+                        title="AIP 6.2 Special Alternate Weather Minima",
+                        text="6.2 Special Alternate Weather Minima with linked approach criteria.",
+                        page_ref="ENR 1.5 - 39",
+                        regulation_type="AIP",
+                    ),
+                ]
+            ),
+        )
+        profile = service._build_query_profile("What does ENR 1.5 subsection 6.2 say?")
+        seeded = service._explicit_subsection_seed_references(profile, top_k=5)
+
+        self.assertTrue(seeded)
+        self.assertEqual(seeded[0].citation, "AIP ENR 1.5 - 39 subsection 6.2")
+
     def test_intent_seed_references_for_cpl_prefers_part_61_hour_requirements(self) -> None:
         service = SearchService(
             embeddings=None,

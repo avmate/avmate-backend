@@ -263,6 +263,12 @@ class SearchService:
                 references = intent_refs
             else:
                 references = self._merge_references(intent_refs, references, limit=max(top_k * 2, 10))
+        explicit_seed_refs = self._explicit_subsection_seed_references(query_profile, top_k)
+        if explicit_seed_refs:
+            if not references:
+                references = explicit_seed_refs
+            else:
+                references = self._merge_references(explicit_seed_refs, references, limit=max(top_k * 2, 10))
         if query_profile.get("weather_minima_intent"):
             references = self._prioritize_weather_minima_references(references, top_k)
             references = self._ensure_parent_subsection_reference(references, parent_label="6.2", limit=top_k)
@@ -296,6 +302,9 @@ class SearchService:
         references = self._drop_malformed_citations(references, limit=top_k)
         if not references and (query_profile.get("cpl_intent") or query_profile.get("speed_limit_intent")):
             backup_refs = self._intent_seed_references(query_profile, top_k)
+            references = self._drop_malformed_citations(backup_refs, limit=top_k)
+        if not references and explicit_subsection_labels and explicit_page_hints:
+            backup_refs = self._explicit_subsection_seed_references(query_profile, top_k)
             references = self._drop_malformed_citations(backup_refs, limit=top_k)
 
         if not references:
@@ -1112,6 +1121,74 @@ class SearchService:
 
         score -= toc_penalty
         return max(0.0, min(1.0, score))
+
+    def _explicit_subsection_seed_references(self, query_profile: dict, top_k: int) -> list[ReferenceItem]:
+        if not self._canonical_store:
+            return []
+
+        explicit_subsection_labels = [label for label in query_profile.get("explicit_subsection_labels", []) if label]
+        explicit_page_hints = [" ".join((hint or "").split()).lower() for hint in query_profile.get("explicit_page_hints", []) if hint]
+        if not explicit_subsection_labels or not explicit_page_hints:
+            return []
+
+        terms = [
+            *explicit_subsection_labels,
+            *explicit_page_hints,
+            *[term for term in query_profile.get("terms", []) if len(term) >= 3][:8],
+            "aip",
+        ]
+        terms = list(dict.fromkeys(terms))
+        sections = self._canonical_store.search_sections_by_terms(terms, limit=14000, regulation_type="AIP")
+        if not sections:
+            sections = self._canonical_store.search_sections_by_terms(terms, limit=14000)
+        if not sections:
+            return []
+
+        ranked: list[tuple[float, ReferenceItem]] = []
+        for section in sections:
+            raw_citation = str(section.get("citation", "") or "")
+            regulation_type = str(section.get("regulation_type", "UNKNOWN") or "UNKNOWN")
+            if regulation_type.upper() != "AIP":
+                continue
+            if not self._is_precise_source_citation(raw_citation, regulation_type):
+                continue
+
+            subsection = self._citation_subsection_label(raw_citation)
+            subsection_match = any(
+                subsection == label or subsection.startswith(f"{label}.") or label.startswith(f"{subsection}.")
+                for label in explicit_subsection_labels
+            )
+            if not subsection_match:
+                continue
+
+            page_ref_lower = " ".join(str(section.get("page_ref", "") or "").split()).lower()
+            page_match = bool(page_ref_lower) and any(page_ref_lower.startswith(hint) for hint in explicit_page_hints)
+            if explicit_page_hints and page_ref_lower and not page_match:
+                continue
+
+            text = f"{section.get('title', '')} {section.get('text', '')}".lower()
+            lexical_hits = sum(1 for term in query_profile.get("terms", []) if term in text)
+            score = 0.56
+            score += 0.22 if subsection in explicit_subsection_labels else 0.14
+            score += 0.22 if page_match else -0.08
+            score += min(0.14, lexical_hits * 0.02)
+
+            reference = self._build_reference_from_section(section, query_profile, score=score)
+            if reference is None:
+                continue
+            if not self._is_precise_citation(reference.citation, reference.regulation_type):
+                continue
+            ranked.append((reference.score, reference))
+
+        if not ranked:
+            return []
+
+        wide_limit = max(top_k * 3, 10)
+        narrowed_limit = max(top_k * 2, 8)
+        references = self._dedupe_references(ranked, wide_limit)
+        references = self._enforce_explicit_page_hints(references, explicit_page_hints, limit=narrowed_limit)
+        references = self._drop_malformed_citations(references, limit=narrowed_limit)
+        return references[:narrowed_limit]
 
     def _build_answer(self, query: str, top_reference: ReferenceItem) -> str:
         flattened = " ".join(top_reference.text.split())
