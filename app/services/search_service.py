@@ -284,6 +284,8 @@ class SearchService:
             references = self._ensure_parent_subsection_reference(references, parent_label="5.3", limit=top_k)
         if query_profile.get("heading_rollup_intent"):
             references = self._expand_heading_subsection_references(references, query_profile, top_k)
+        if explicit_page_hints:
+            references = self._enforce_explicit_page_hints(references, explicit_page_hints, limit=top_k)
         if query_profile.get("weather_minima_intent"):
             references = self._ensure_special_weather_parent_reference(
                 references,
@@ -1744,6 +1746,54 @@ class SearchService:
             if len(deduped) >= limit:
                 break
         return deduped
+
+    def _enforce_explicit_page_hints(
+        self,
+        references: list[ReferenceItem],
+        explicit_page_hints: list[str],
+        *,
+        limit: int,
+    ) -> list[ReferenceItem]:
+        if not references:
+            return []
+
+        hints = [" ".join((hint or "").split()).lower() for hint in explicit_page_hints if hint]
+        if not hints:
+            return references[:limit]
+
+        matched: list[ReferenceItem] = []
+        unmatched: list[ReferenceItem] = []
+        for item in references:
+            page_prefix = self._page_ref_prefix(item.page_ref).lower()
+            citation_prefix = self._citation_page_prefix(item.citation).lower()
+            citation_lower = item.citation.lower()
+            is_match = False
+            for hint in hints:
+                if (page_prefix and page_prefix.startswith(hint)) or (citation_prefix and citation_prefix.startswith(hint)):
+                    is_match = True
+                    break
+                if hint in citation_lower:
+                    is_match = True
+                    break
+            if is_match:
+                matched.append(item)
+            else:
+                unmatched.append(item)
+
+        if not matched:
+            return references[:limit]
+
+        ordered: list[ReferenceItem] = []
+        seen: set[str] = set()
+        for item in [*matched, *unmatched]:
+            key = item.citation.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            ordered.append(item)
+            if len(ordered) >= limit:
+                break
+        return ordered
 
     def _prioritize_weather_minima_references(self, references: list[ReferenceItem], top_k: int) -> list[ReferenceItem]:
         if not references:

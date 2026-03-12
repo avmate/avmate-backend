@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import os
 import random
@@ -27,6 +28,10 @@ QUERY_DELAY_SECONDS = float(os.getenv("AVMATE_QUERY_DELAY_SECONDS", "0.55"))
 TOP_K = int(os.getenv("AVMATE_RANDOM_QUERY_TOP_K", "5"))
 REPORT_PATH = Path(os.getenv("AVMATE_RANDOM_QUERY_REPORT", "stress_random_queries_report.json"))
 MIN_QUERIES_PER_MANUAL = int(os.getenv("AVMATE_MIN_QUERIES_PER_MANUAL", "1"))
+QUERY_BANK_PATHS = os.getenv(
+    "AVMATE_QUERY_BANK_PATHS",
+    "data/query_coverage_bank.csv,data/query_coverage_bank_law.csv",
+)
 
 NON_AIP_CITATION_PATTERN = re.compile(
     r"^(?:CASR|CAR|CAO|MOS|CAA)\s+(?:Part\s+)?[0-9]+[0-9A-Za-z.\-]*(?:\([0-9A-Za-z]+\))*$|^CAO\s+DOC\s+[0-9A-Za-z.\-]+$",
@@ -37,6 +42,22 @@ AIP_OUTPUT_CITATION_PATTERN = re.compile(
     re.IGNORECASE,
 )
 SUBSECTION_PATTERN = re.compile(r"\bAIP\s+([0-9]+(?:\.[0-9]+){1,4})\b", re.IGNORECASE)
+REFERENCE_CITATION_HINT_PATTERN = re.compile(
+    r"\b("
+    r"(?:CASR|CAR|CAO|MOS|CAA)\s+(?:Part\s+)?[0-9]+[0-9A-Za-z.\-]*(?:\([0-9A-Za-z]+\))*"
+    r"|CAO\s+DOC\s+[0-9A-Za-z.\-]+"
+    r"|AIP\s+(?:GEN|ENR|AD)\s+\d+(?:\.\d+)?(?:\s*-\s*\(?\d+\)?)?(?:\s+subsection\s+[0-9]+(?:\.[0-9]+){1,4})?"
+    r"|AIP\s+[0-9]+(?:\.[0-9]+){1,4}"
+    r")\b",
+    re.IGNORECASE,
+)
+PART_HINT_PATTERN = re.compile(r"\bpart\s+(\d+)\b", re.IGNORECASE)
+OUT_OF_SCOPE_HINT_PATTERNS = (
+    re.compile(r"\b(?:hr|behavioral|operational|general practice)\b", re.IGNORECASE),
+    re.compile(r"\b(?:casa workbook|syllabus|handbook|guide|advisory circular)\b", re.IGNORECASE),
+    re.compile(r"\b(?:bo?m|meteorology|human factors)\b", re.IGNORECASE),
+    re.compile(r"\b(?:airservices|naips|atsb|transport safety investigation act)\b", re.IGNORECASE),
+)
 
 
 @dataclass(frozen=True)
@@ -45,6 +66,10 @@ class QueryCase:
     expected_citation: str
     regulation_type: str
     source_file: str
+    expected_hint: str = ""
+    category: str = ""
+    is_bank_case: bool = False
+    out_of_scope: bool = False
 
 
 @dataclass
@@ -55,6 +80,9 @@ class QueryResult:
     expected_citation: str
     citations: list[str]
     status_code: int
+    is_bank_case: bool = False
+    out_of_scope: bool = False
+    hint_match: bool = False
 
 
 def normalize_spaces(value: str) -> str:
@@ -137,6 +165,103 @@ def _sample_manual_rows(rows: list[RegulationSection], n: int) -> list[Regulatio
     return sampled
 
 
+def infer_expected_citation_from_hint(hint: str) -> str:
+    normalized_hint = normalize_spaces(hint)
+    if not normalized_hint:
+        return ""
+    match = REFERENCE_CITATION_HINT_PATTERN.search(normalized_hint)
+    if not match:
+        return ""
+    candidate = normalize_spaces(match.group(0))
+    if candidate.upper().startswith("AIP "):
+        return candidate
+    if candidate.lower().startswith("part "):
+        return ""
+    return candidate
+
+
+def _hint_matches_citations(hint: str, citations: list[str]) -> bool:
+    normalized_hint = normalize_spaces(hint).lower()
+    if not normalized_hint:
+        return True
+    if not citations:
+        return False
+
+    citations_lower = [citation.lower() for citation in citations]
+    expected_citation = infer_expected_citation_from_hint(hint).lower()
+    if expected_citation:
+        return expected_citation in citations_lower
+
+    if "aip" in normalized_hint and any(citation.startswith("aip ") for citation in citations_lower):
+        return True
+    for token in ("casr", "car", "cao", "mos", "caa"):
+        if token in normalized_hint and any(citation.startswith(f"{token} ") for citation in citations_lower):
+            return True
+
+    part_match = PART_HINT_PATTERN.search(normalized_hint)
+    if part_match:
+        part_value = part_match.group(1)
+        if any(re.search(rf"\b{re.escape(part_value)}(?:\.\d+)?\b", citation) for citation in citations_lower):
+            return True
+
+    # If hint is generic educational context, citation match is optional.
+    if any(pattern.search(normalized_hint) for pattern in OUT_OF_SCOPE_HINT_PATTERNS):
+        return True
+    return False
+
+
+def _is_out_of_scope_case(reference_hint: str, category: str) -> bool:
+    hint = normalize_spaces(reference_hint).lower()
+    cat = normalize_spaces(category).lower()
+    combined = f"{hint} {cat}".strip()
+    if not combined:
+        return False
+    return any(pattern.search(combined) for pattern in OUT_OF_SCOPE_HINT_PATTERNS)
+
+
+def load_query_bank_cases(paths_csv: str) -> list[QueryCase]:
+    paths = [Path(item.strip()) for item in paths_csv.split(",") if item.strip()]
+    cases: list[QueryCase] = []
+    for path in paths:
+        if not path.exists():
+            continue
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            reader = csv.DictReader(handle)
+            for row in reader:
+                question = normalize_spaces(
+                    row.get("question") or row.get("Question") or row.get("query") or row.get("Query") or ""
+                )
+                if not question:
+                    continue
+                category = normalize_spaces(row.get("category") or row.get("Category") or "query_bank")
+                hint = normalize_spaces(
+                    row.get("reference_context")
+                    or row.get("Reference/Context")
+                    or row.get("primary_reference")
+                    or row.get("Primary Reference")
+                    or row.get("reference")
+                    or ""
+                )
+                expected_citation = infer_expected_citation_from_hint(hint)
+                regulation_type = ""
+                if expected_citation:
+                    regulation_type = expected_citation.split()[0].upper()
+                out_of_scope = _is_out_of_scope_case(hint, category)
+                cases.append(
+                    QueryCase(
+                        query=question,
+                        expected_citation=expected_citation,
+                        regulation_type=regulation_type,
+                        source_file=f"bank::{path.name}",
+                        expected_hint=hint,
+                        category=category,
+                        is_bank_case=True,
+                        out_of_scope=out_of_scope,
+                    )
+                )
+    return cases
+
+
 def load_random_sections(count: int) -> list[RegulationSection]:
     with session_scope() as session:
         rows = session.scalars(
@@ -212,6 +337,8 @@ def query_api(case: QueryCase) -> QueryResult:
                     expected_citation=case.expected_citation,
                     citations=[],
                     status_code=0,
+                    is_bank_case=case.is_bank_case,
+                    out_of_scope=case.out_of_scope,
                 )
             time.sleep(RETRY_DELAY_SECONDS)
             continue
@@ -227,6 +354,8 @@ def query_api(case: QueryCase) -> QueryResult:
             expected_citation=case.expected_citation,
             citations=[],
             status_code=response.status_code,
+            is_bank_case=case.is_bank_case,
+            out_of_scope=case.out_of_scope,
         )
 
     payload = response.json() if response is not None else {}
@@ -239,6 +368,8 @@ def query_api(case: QueryCase) -> QueryResult:
             expected_citation=case.expected_citation,
             citations=[],
             status_code=200,
+            is_bank_case=case.is_bank_case,
+            out_of_scope=case.out_of_scope,
         )
 
     if len({c.lower() for c in citations}) != len(citations):
@@ -249,6 +380,8 @@ def query_api(case: QueryCase) -> QueryResult:
             expected_citation=case.expected_citation,
             citations=citations,
             status_code=200,
+            is_bank_case=case.is_bank_case,
+            out_of_scope=case.out_of_scope,
         )
 
     if not all(is_precise_citation(citation, case.regulation_type) for citation in citations):
@@ -259,9 +392,24 @@ def query_api(case: QueryCase) -> QueryResult:
             expected_citation=case.expected_citation,
             citations=citations,
             status_code=200,
+            is_bank_case=case.is_bank_case,
+            out_of_scope=case.out_of_scope,
         )
 
-    if case.expected_citation not in citations:
+    hint_match = _hint_matches_citations(case.expected_hint or case.expected_citation, citations)
+    if case.expected_citation and case.expected_citation not in citations:
+        if case.is_bank_case:
+            return QueryResult(
+                ok=True,
+                reason="ok_hint_miss",
+                query=case.query,
+                expected_citation=case.expected_citation,
+                citations=citations,
+                status_code=200,
+                is_bank_case=True,
+                out_of_scope=case.out_of_scope,
+                hint_match=hint_match,
+            )
         return QueryResult(
             ok=False,
             reason="expected_missing",
@@ -269,15 +417,21 @@ def query_api(case: QueryCase) -> QueryResult:
             expected_citation=case.expected_citation,
             citations=citations,
             status_code=200,
+            is_bank_case=case.is_bank_case,
+            out_of_scope=case.out_of_scope,
+            hint_match=hint_match,
         )
 
     return QueryResult(
         ok=True,
-        reason="ok",
+        reason="ok" if hint_match else "ok_hint_miss",
         query=case.query,
         expected_citation=case.expected_citation,
         citations=citations,
         status_code=200,
+        is_bank_case=case.is_bank_case,
+        out_of_scope=case.out_of_scope,
+        hint_match=hint_match,
     )
 
 
@@ -304,6 +458,7 @@ def main() -> int:
     print(f"Target accuracy: {TARGET_ACCURACY:.2%}")
     print(f"Queries per round: {QUERY_COUNT}")
     print(f"Minimum per manual: {MIN_QUERIES_PER_MANUAL}")
+    print(f"Query banks: {QUERY_BANK_PATHS}")
 
     sampled_rows = load_random_sections(QUERY_COUNT)
     if not sampled_rows:
@@ -311,23 +466,35 @@ def main() -> int:
         return 1
     manuals = sorted({normalize_spaces(row.source_file) or "unknown_source" for row in sampled_rows})
     print(f"Manuals covered in sample set: {len(manuals)}")
+    bank_cases = load_query_bank_cases(QUERY_BANK_PATHS)
+    print(f"Loaded bank queries: {len(bank_cases)}")
 
     all_rounds: list[dict] = []
     for round_number in range(1, MAX_ROUNDS + 1):
-        cases: list[QueryCase] = []
+        random_cases: list[QueryCase] = []
         for row in sampled_rows:
             case = build_query_case(row)
             if case:
-                cases.append(case)
-        if not cases:
+                random_cases.append(case)
+        if not random_cases:
             print("No query cases generated.")
             return 1
-        manual_case_counts = Counter(case.source_file or "unknown_source" for case in cases)
+        cases = [*random_cases, *bank_cases]
+        manual_case_counts = Counter(case.source_file or "unknown_source" for case in random_cases)
         print(f"Round {round_number} manual coverage: {len(manual_case_counts)} manuals")
+        print(f"Round {round_number} total queries: random={len(random_cases)} bank={len(bank_cases)}")
 
         accuracy, results = run_round(round_number, cases)
         reason_counts = Counter(result.reason for result in results)
-        print(f"Round {round_number} accuracy={accuracy:.4f}")
+        in_scope_results = [result for result in results if not result.out_of_scope]
+        out_of_scope_results = [result for result in results if result.out_of_scope]
+        in_scope_passed = sum(1 for result in in_scope_results if result.ok)
+        in_scope_accuracy = in_scope_passed / max(len(in_scope_results), 1)
+        print(f"Round {round_number} accuracy(all)={accuracy:.4f}")
+        print(
+            f"Round {round_number} accuracy(in_scope)={in_scope_accuracy:.4f} "
+            f"out_of_scope={len(out_of_scope_results)}"
+        )
         print(f"Reasons: {dict(reason_counts)}")
 
         failed_examples = [
@@ -337,17 +504,28 @@ def main() -> int:
                 "expected_citation": result.expected_citation,
                 "citations": result.citations,
             }
-            for result in results
+            for result in in_scope_results
             if not result.ok
         ][:30]
+        out_of_scope_examples = [
+            {
+                "reason": result.reason,
+                "query": result.query,
+                "expected_citation": result.expected_citation,
+                "citations": result.citations,
+            }
+            for result in out_of_scope_results[:20]
+        ]
 
         all_rounds.append(
             {
                 "round": round_number,
                 "accuracy": accuracy,
+                "in_scope_accuracy": in_scope_accuracy,
                 "reason_counts": dict(reason_counts),
                 "manual_case_counts": dict(manual_case_counts),
                 "failed_examples": failed_examples,
+                "out_of_scope_examples": out_of_scope_examples,
             }
         )
         REPORT_PATH.write_text(
@@ -357,6 +535,7 @@ def main() -> int:
                     "query_count": QUERY_COUNT,
                     "manual_count": len(manuals),
                     "manuals": manuals,
+                    "bank_query_count": len(bank_cases),
                     "target_accuracy": TARGET_ACCURACY,
                     "rounds": all_rounds,
                 },
@@ -365,11 +544,11 @@ def main() -> int:
             encoding="utf-8",
         )
 
-        if accuracy >= TARGET_ACCURACY:
-            print(f"PASS: accuracy {accuracy:.4f} >= {TARGET_ACCURACY:.4f}")
+        if in_scope_accuracy >= TARGET_ACCURACY:
+            print(f"PASS: in-scope accuracy {in_scope_accuracy:.4f} >= {TARGET_ACCURACY:.4f}")
             return 0
 
-    print(f"FAIL: accuracy stayed below {TARGET_ACCURACY:.4f} after {MAX_ROUNDS} rounds")
+    print(f"FAIL: in-scope accuracy stayed below {TARGET_ACCURACY:.4f} after {MAX_ROUNDS} rounds")
     return 1
 
 

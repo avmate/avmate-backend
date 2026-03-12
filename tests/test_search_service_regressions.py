@@ -349,6 +349,24 @@ Additional notes unrelated to special alternate minima.
         self.assertEqual(len(filtered), 1)
         self.assertEqual(filtered[0].citation, "AIP ENR 1.5 - 39 subsection 6.2")
 
+    def test_enforce_explicit_page_hints_prefers_matching_page_block(self) -> None:
+        refs = [
+            _reference(
+                "AIP ENR 1.6 - 5 subsection 6.2",
+                text="6.2 Radio Failure Procedure",
+                score=0.91,
+            ),
+            _reference(
+                "AIP ENR 1.5 - 39 subsection 6.2",
+                text="6.2 Special Alternate Weather Minima",
+                score=0.88,
+            ),
+        ]
+        filtered = self.service._enforce_explicit_page_hints(refs, ["enr 1.5"], limit=5)
+
+        self.assertTrue(filtered)
+        self.assertEqual(filtered[0].citation, "AIP ENR 1.5 - 39 subsection 6.2")
+
     def test_intent_seed_references_for_cpl_prefers_part_61_hour_requirements(self) -> None:
         service = SearchService(
             embeddings=None,

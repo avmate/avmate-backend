@@ -37,6 +37,7 @@ class IndexerService:
         total_documents = 0
         total_chunks = 0
         failed_documents = 0
+        upsert_batch_size = max(128, self._settings.embedding_batch_size * 8)
         documents = self._catalog.load_documents()
         run_id = self._canonical_store.begin_run(documents_seen=len(documents))
         self._canonical_store.deactivate_all_documents()
@@ -91,7 +92,6 @@ class IndexerService:
                     ids: list[str] = []
                     doc_chunks: list[str] = []
                     metadatas: list[dict[str, Any]] = []
-
                     for section_index, section in enumerate(persisted_sections):
                         chunks = list(
                             chunk_words(
@@ -111,15 +111,33 @@ class IndexerService:
                                     "chunk_index": chunk_index,
                                 }
                             )
+                    if not doc_chunks:
+                        print(f"Skipping document {document['path']}: no chunks generated after parsing.")
+                        failed_documents += 1
+                        continue
+
+                    for start in range(0, len(doc_chunks), upsert_batch_size):
+                        end = start + upsert_batch_size
+                        batch_chunks = doc_chunks[start:end]
+                        batch_ids = ids[start:end]
+                        batch_metadatas = metadatas[start:end]
+                        batch_embeddings = self._embeddings.encode(
+                            batch_chunks,
+                            batch_size=self._settings.embedding_batch_size,
+                        )
+                        self._vector_store.upsert(
+                            ids=batch_ids,
+                            embeddings=batch_embeddings,
+                            documents=batch_chunks,
+                            metadatas=batch_metadatas,
+                        )
+
+                    total_documents += 1
+                    total_chunks += len(doc_chunks)
                 except Exception as exc:
                     print(f"Skipping document {document['path']}: {exc}")
                     failed_documents += 1
                     continue
-
-                embeddings = self._embeddings.encode(doc_chunks, batch_size=self._settings.embedding_batch_size)
-                self._vector_store.upsert(ids=ids, embeddings=embeddings, documents=doc_chunks, metadatas=metadatas)
-                total_documents += 1
-                total_chunks += len(doc_chunks)
         finally:
             self._canonical_store.finish_run(
                 run_id,
