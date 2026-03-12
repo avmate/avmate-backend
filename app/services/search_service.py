@@ -94,6 +94,7 @@ AIP_OUTPUT_CITATION_PATTERN = re.compile(
     re.IGNORECASE,
 )
 AIP_SOURCE_CITATION_PATTERN = re.compile(r"^AIP\s+[0-9]+(?:\.[0-9]+){1,4}$", re.IGNORECASE)
+ALTITUDE_10000_PATTERN = re.compile(r"\b(?:10000|10,000|10 000|10\s*000|ten\s+thousand)\b", re.IGNORECASE)
 
 
 class SearchService:
@@ -236,6 +237,8 @@ class SearchService:
             not references
             or bool(query_profile.get("weather_minima_intent"))
             or bool(query_profile.get("qnh_intent"))
+            or bool(query_profile.get("cpl_intent"))
+            or bool(query_profile.get("speed_limit_intent"))
         )
         if should_try_lexical_fallback:
             lexical_top_k = max(top_k, 12) if query_profile.get("qnh_intent") else top_k
@@ -252,6 +255,14 @@ class SearchService:
                         references = lexical_fallback_refs
                     elif query_profile.get("qnh_intent"):
                         references = self._merge_references(references, lexical_fallback_refs, limit=max(top_k * 2, 10))
+                    elif query_profile.get("cpl_intent") or query_profile.get("speed_limit_intent"):
+                        references = self._merge_references(lexical_fallback_refs, references, limit=max(top_k * 2, 10))
+        intent_refs = self._intent_seed_references(query_profile, top_k)
+        if intent_refs:
+            if not references:
+                references = intent_refs
+            else:
+                references = self._merge_references(intent_refs, references, limit=max(top_k * 2, 10))
         if query_profile.get("weather_minima_intent"):
             references = self._prioritize_weather_minima_references(references, top_k)
             references = self._ensure_parent_subsection_reference(references, parent_label="6.2", limit=top_k)
@@ -281,6 +292,9 @@ class SearchService:
             )
             references = self._dedupe_by_subsection_label(references, limit=top_k)
         references = self._drop_malformed_citations(references, limit=top_k)
+        if not references and (query_profile.get("cpl_intent") or query_profile.get("speed_limit_intent")):
+            backup_refs = self._intent_seed_references(query_profile, top_k)
+            references = self._drop_malformed_citations(backup_refs, limit=top_k)
 
         if not references:
             return SearchResponse(
@@ -453,7 +467,17 @@ class SearchService:
         if "circling" in query_lower:
             required_patterns.append(re.compile(r"\bcircling\b", re.IGNORECASE))
         has_measure = any(term in query_lower for term in ("radius", "radii", "minima", "minimum"))
-        if "radius" in query_lower or "radii" in query_lower or "minima" in query_lower or "minimum" in query_lower:
+        minima_measure_intent = (
+            ("radius" in query_lower)
+            or ("radii" in query_lower)
+            or ("circling" in query_lower and ("minima" in query_lower or "minimum" in query_lower))
+            or (
+                ("alternate" in query_lower)
+                and ("weather" in query_lower)
+                and ("minima" in query_lower or "minimum" in query_lower)
+            )
+        )
+        if minima_measure_intent:
             required_patterns.append(re.compile(r"\b(?:radi(?:us|i)|minima|minimum)\b", re.IGNORECASE))
         qnh_intent = "qnh" in query_lower
         if qnh_intent:
@@ -464,8 +488,8 @@ class SearchService:
             required_patterns.append(re.compile(r"\b(?:250)\b", re.IGNORECASE))
         if cpl_intent:
             required_patterns.append(re.compile(r"\b(?:commercial|cpl)\b", re.IGNORECASE))
-            required_patterns.append(re.compile(r"\b(?:pilot)\b", re.IGNORECASE))
-            required_patterns.append(re.compile(r"\b(?:hours|experience)\b", re.IGNORECASE))
+            required_patterns.append(re.compile(r"\b(?:pilot|licence|license|part\s*61)\b", re.IGNORECASE))
+            required_patterns.append(re.compile(r"\b(?:hours|experience|aeronautical)\b", re.IGNORECASE))
         weather_minima_intent = (
             ("alternate" in query_lower)
             and ("weather" in query_lower)
@@ -522,9 +546,10 @@ class SearchService:
         ]
         numeric_intent = bool(
             re.search(
-                r"\b(?:radius|radii|minima|minimum|nm|feet|foot|ft|kts|knots|altitude|distance)\b",
+                r"\b(?:nm|feet|foot|ft|kts|knots|altitude|distance|hpa)\b",
                 query_lower,
             )
+            or minima_measure_intent
         )
         heading_rollup_intent = bool(explicit_subsection_labels) or any(
             hint in query_lower for hint in HEADING_ROLLUP_HINTS
@@ -616,11 +641,17 @@ class SearchService:
         )
         qnh_evidence = bool(re.search(r"\bqnh\b", document_lower) or re.search(r"\bqnh\b", citation_lower))
         weather_phrase_hit = bool(re.search(r"\bspecial\s+alternate\s+weather\s+minima\b", document_lower))
-        cpl_evidence = bool(
-            re.search(r"\bcommercial\b", document_lower)
-            and re.search(r"\bpilot\b", document_lower)
-            and re.search(r"\b(?:hours|experience)\b", document_lower)
+        cpl_identity = bool(
+            re.search(r"\b(?:commercial|cpl)\b", document_lower)
+            or re.search(r"\bpart\s*61\b", document_lower)
+            or re.search(r"\bpart\s*61\b", citation_lower)
         )
+        cpl_authority = bool(
+            re.search(r"\b(?:pilot|licen[cs]e)\b", document_lower)
+            or re.search(r"\bpart\s*61\b", citation_lower)
+        )
+        cpl_experience = bool(re.search(r"\b(?:hours|experience|aeronautical)\b", document_lower))
+        cpl_evidence = cpl_identity and cpl_authority and cpl_experience
         speed_limit_evidence = bool(
             re.search(r"\b(?:250)\b", document_lower)
             and re.search(r"\b(?:knots|kts|kt)\b", document_lower)
@@ -822,9 +853,13 @@ class SearchService:
             numeric_evidence = bool(re.search(r"\b\d+(?:\.\d+)?\s*(?:nm|ft|m|kts|kt|hpa)\b", text_lower))
             qnh_evidence = "qnh" in text_lower or "qnh" in citation_lower
             cpl_evidence = bool(
-                ("commercial" in text_lower or "cpl" in text_lower)
-                and "pilot" in text_lower
-                and ("hours" in text_lower or "experience" in text_lower)
+                (
+                    re.search(r"\b(?:commercial|cpl)\b", text_lower)
+                    or re.search(r"\bpart\s*61\b", text_lower)
+                    or re.search(r"\bpart\s*61\b", citation_lower)
+                )
+                and (re.search(r"\b(?:pilot|licen[cs]e)\b", text_lower) or re.search(r"\bpart\s*61\b", citation_lower))
+                and re.search(r"\b(?:hours|experience|aeronautical)\b", text_lower)
             )
             speed_limit_evidence = bool(
                 re.search(r"\b(?:250)\b", text_lower)
@@ -895,6 +930,186 @@ class SearchService:
 
         references = self._dedupe_references(ranked, max(top_k * 3, top_k))
         return self._filter_final_references(references, query_profile, top_k)
+
+    def _intent_seed_references(self, query_profile: dict, top_k: int) -> list[ReferenceItem]:
+        if not self._canonical_store:
+            return []
+
+        cpl_intent = bool(query_profile.get("cpl_intent"))
+        speed_limit_intent = bool(query_profile.get("speed_limit_intent"))
+        if not (cpl_intent or speed_limit_intent):
+            return []
+
+        query_terms = [term for term in query_profile.get("terms", []) if len(term) >= 3]
+        seed_terms: list[str] = list(query_terms)
+        regulation_hints: list[str | None] = []
+        if cpl_intent:
+            seed_terms.extend(
+                [
+                    "cpl",
+                    "commercial",
+                    "pilot",
+                    "licence",
+                    "license",
+                    "hours",
+                    "aeronautical",
+                    "experience",
+                    "part 61",
+                ]
+            )
+            regulation_hints.extend(["CASR", None])
+        if speed_limit_intent:
+            seed_terms.extend(
+                [
+                    "speed",
+                    "limit",
+                    "250",
+                    "knots",
+                    "kts",
+                    "below",
+                    "10000",
+                    "10,000",
+                ]
+            )
+            regulation_hints.extend(["AIP", "CASR", "CAR", None])
+
+        seed_terms = list(dict.fromkeys(term for term in seed_terms if len(term.strip()) >= 3))
+        if not seed_terms:
+            return []
+
+        hint_order = list(dict.fromkeys(regulation_hints)) or [None]
+        scan_limit = 16000 if (cpl_intent and speed_limit_intent) else 14000
+        ranked: list[tuple[float, ReferenceItem]] = []
+        seen_sections: set[str] = set()
+        for hint in hint_order:
+            sections = self._canonical_store.search_sections_by_terms(
+                seed_terms,
+                limit=scan_limit,
+                regulation_type=hint,
+            )
+            for section in sections:
+                section_id = str(section.get("section_id", "") or "")
+                if section_id and section_id in seen_sections:
+                    continue
+                if section_id:
+                    seen_sections.add(section_id)
+
+                raw_citation = str(section.get("citation", "Unknown") or "Unknown")
+                regulation_type = str(section.get("regulation_type", "UNKNOWN") or "UNKNOWN")
+                if not self._is_precise_source_citation(raw_citation, regulation_type):
+                    continue
+
+                score = self._score_intent_seed_candidate(section, query_profile)
+                if score < 0.46:
+                    continue
+
+                reference = self._build_reference_from_section(
+                    section,
+                    query_profile,
+                    score=score,
+                )
+                if reference is None:
+                    continue
+                if not self._is_precise_citation(reference.citation, reference.regulation_type):
+                    continue
+                ranked.append((reference.score, reference))
+
+        if not ranked:
+            return []
+
+        wide_limit = max(top_k * 3, 12)
+        narrowed_limit = max(top_k * 2, 8)
+        references = self._dedupe_references(ranked, wide_limit)
+        references = self._drop_malformed_citations(references, limit=wide_limit)
+        references = self._filter_final_references(references, query_profile, narrowed_limit)
+        return references[:narrowed_limit]
+
+    def _score_intent_seed_candidate(self, section: dict, query_profile: dict) -> float:
+        raw_citation = str(section.get("citation", "") or "")
+        regulation_type = str(section.get("regulation_type", "UNKNOWN") or "UNKNOWN")
+        canonical_title = str(section.get("title", "") or "")
+        canonical_text = str(section.get("text", "") or "")
+        combined_text = f"{canonical_title} {canonical_text}".strip()
+        if not combined_text:
+            return 0.0
+
+        text_lower = combined_text.lower()
+        citation_lower = raw_citation.lower()
+        page_ref_lower = " ".join(str(section.get("page_ref", "") or "").split()).lower()
+
+        terms = query_profile.get("terms", [])
+        phrases = query_profile.get("phrases", [])
+        required_patterns = query_profile.get("required_patterns", [])
+        intent_tokens = query_profile.get("intent_tokens", [])
+        explicit_subsection_labels = query_profile.get("explicit_subsection_labels", [])
+        explicit_page_hints = query_profile.get("explicit_page_hints", [])
+
+        if required_patterns and not all(pattern.search(combined_text) or pattern.search(raw_citation) for pattern in required_patterns):
+            return 0.0
+
+        lexical_hits = sum(1 for term in terms if term in text_lower or term in citation_lower)
+        lexical_ratio = lexical_hits / max(len(terms), 1)
+        phrase_hits = sum(1 for phrase in phrases if phrase in text_lower)
+        intent_hits = sum(1 for token in intent_tokens if token in text_lower)
+        toc_penalty = self._table_of_contents_penalty(canonical_text)
+
+        score = 0.2
+        score += lexical_ratio * 0.54
+        score += min(phrase_hits * 0.08, 0.24)
+        if intent_hits:
+            score += min(0.12, intent_hits * 0.02)
+
+        subsection = self._citation_subsection_label(raw_citation)
+        if explicit_subsection_labels:
+            subsection_match = any(subsection == label or subsection.startswith(f"{label}.") for label in explicit_subsection_labels)
+            score += 0.26 if subsection_match else -0.22
+        if explicit_page_hints:
+            page_match = any(page_ref_lower.startswith(hint) for hint in explicit_page_hints)
+            score += 0.3 if page_match else -0.26
+
+        cpl_intent = bool(query_profile.get("cpl_intent"))
+        speed_limit_intent = bool(query_profile.get("speed_limit_intent"))
+        if cpl_intent:
+            cpl_identity = bool(
+                re.search(r"\b(?:commercial|cpl)\b", text_lower)
+                or re.search(r"\bpart\s*61\b", text_lower)
+                or re.search(r"\bpart\s*61\b", citation_lower)
+            )
+            cpl_authority = bool(
+                re.search(r"\b(?:pilot|licen[cs]e)\b", text_lower)
+                or re.search(r"\bpart\s*61\b", citation_lower)
+            )
+            cpl_experience = bool(re.search(r"\b(?:hours|experience|aeronautical)\b", text_lower))
+            if cpl_identity and cpl_authority and cpl_experience:
+                score += 0.44
+            else:
+                score -= 0.38
+            if regulation_type.upper() == "CASR":
+                score += 0.16
+            if re.search(r"\bpart\s*61\b", text_lower) or re.search(r"\bpart\s*61\b", citation_lower):
+                score += 0.22
+
+        if speed_limit_intent:
+            speed_limit_evidence = bool(
+                re.search(r"\b250\b", text_lower)
+                and re.search(r"\b(?:knots|kts|kt)\b", text_lower)
+                and ALTITUDE_10000_PATTERN.search(text_lower)
+            )
+            if speed_limit_evidence:
+                score += 0.52
+            else:
+                score -= 0.4
+            if re.search(r"\b(?:below|at\s+or\s+below)\b", text_lower):
+                score += 0.08
+            if re.search(r"\b(?:speed|airspeed)\b", text_lower):
+                score += 0.06
+            if regulation_type.upper() == "AIP":
+                score += 0.14
+            if page_ref_lower.startswith("enr "):
+                score += 0.08
+
+        score -= toc_penalty
+        return max(0.0, min(1.0, score))
 
     def _build_answer(self, query: str, top_reference: ReferenceItem) -> str:
         flattened = " ".join(top_reference.text.split())

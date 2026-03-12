@@ -349,6 +349,75 @@ Additional notes unrelated to special alternate minima.
         self.assertEqual(len(filtered), 1)
         self.assertEqual(filtered[0].citation, "AIP ENR 1.5 - 39 subsection 6.2")
 
+    def test_intent_seed_references_for_cpl_prefers_part_61_hour_requirements(self) -> None:
+        service = SearchService(
+            embeddings=None,
+            vector_store=None,
+            canonical_store=_StubCanonicalStore(
+                [
+                    _section(
+                        "CASR Part 61",
+                        title="CASR Part 61 Commercial pilot licence aeronautical experience",
+                        text="The applicant for a commercial pilot licence must meet aeronautical experience hours requirements under Part 61.",
+                        page_ref="",
+                        regulation_type="CASR",
+                    ),
+                    _section(
+                        "CAR 206",
+                        title="General operations rule",
+                        text="This section discusses non-CPL operational requirements.",
+                        page_ref="",
+                        regulation_type="CAR",
+                    ),
+                    _section(
+                        "CAO level",
+                        title="Malformed CAO heading",
+                        text="Not a precise citation and must not be used.",
+                        page_ref="",
+                        regulation_type="CAO",
+                    ),
+                ]
+            ),
+        )
+        profile = service._build_query_profile("CPL minimum flight hours")
+        seeded = service._intent_seed_references(profile, top_k=5)
+
+        self.assertTrue(seeded)
+        self.assertEqual(seeded[0].citation, "CASR Part 61")
+        self.assertTrue(all("CAO level" != item.citation for item in seeded))
+        self.assertTrue(all(service._is_precise_citation(item.citation, item.regulation_type) for item in seeded))
+
+    def test_intent_seed_references_for_speed_prefers_250_knots_below_10000(self) -> None:
+        service = SearchService(
+            embeddings=None,
+            vector_store=None,
+            canonical_store=_StubCanonicalStore(
+                [
+                    _section(
+                        "AIP 1.7.4",
+                        title="AIP 1.7.4 Speed restrictions",
+                        text="Below 10 000 FT, indicated airspeed must not exceed 250 knots unless authorised by ATC.",
+                        page_ref="ENR 1.1 - 7",
+                        regulation_type="AIP",
+                    ),
+                    _section(
+                        "AIP 3.1.2",
+                        title="AIP 3.1.2 unrelated heading",
+                        text="Unrelated text without the controlling speed limit numbers.",
+                        page_ref="ENR 1.10 - 12",
+                        regulation_type="AIP",
+                    ),
+                ]
+            ),
+        )
+        profile = service._build_query_profile("Speed limit below 10,000ft")
+        seeded = service._intent_seed_references(profile, top_k=5)
+
+        self.assertTrue(seeded)
+        self.assertEqual(seeded[0].citation, "AIP ENR 1.1 - 7 subsection 1.7.4")
+        self.assertTrue(any("250 knots" in item.text.lower() for item in seeded))
+        self.assertTrue(all(service._is_precise_citation(item.citation, item.regulation_type) for item in seeded))
+
 
 if __name__ == "__main__":
     unittest.main()
