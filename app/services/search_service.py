@@ -306,6 +306,8 @@ class SearchService:
         if query_profile.get("qnh_intent"):
             references = self._prioritize_qnh_references(references, query_profile, top_k)
             references = self._ensure_parent_subsection_reference(references, parent_label="5.3", limit=top_k)
+        if query_profile.get("cpl_intent"):
+            references = self._prioritize_cpl_references(references, top_k)
         if query_profile.get("passenger_recency_intent"):
             references = self._prioritize_passenger_recency_references(references, top_k)
         if query_profile.get("fuel_requirement_intent"):
@@ -314,6 +316,13 @@ class SearchService:
             references = self._expand_heading_subsection_references(references, query_profile, top_k)
         if explicit_page_hints:
             references = self._enforce_explicit_page_hints(references, explicit_page_hints, limit=top_k)
+        if explicit_special_weather_query:
+            references = self._ensure_special_weather_parent_reference(
+                references,
+                limit=top_k,
+                prefer_special_phrase=True,
+            )
+            references = self._dedupe_by_subsection_label(references, limit=top_k)
         if query_profile.get("weather_minima_intent"):
             references = self._ensure_special_weather_parent_reference(
                 references,
@@ -432,6 +441,12 @@ class SearchService:
 
     def _select_answer_reference(self, query_profile: dict, references: list[ReferenceItem]) -> ReferenceItem:
         lead = references[0]
+        if query_profile.get("cpl_intent"):
+            for citation in ("CASR 61.610", "CASR 61.590", "CASR 61.580", "CASR 61.605", "CASR 61.585"):
+                for item in references:
+                    if item.citation == citation:
+                        return self._prefer_operational_reference_text(item, query_profile)
+            return self._prefer_operational_reference_text(lead, query_profile)
         if query_profile.get("passenger_recency_intent"):
             for item in references:
                 if item.citation == "CASR 61.395":
@@ -2272,6 +2287,45 @@ class SearchService:
                 score += 0.4
             if re.search(r"\.{5,}", item.text):
                 score -= 0.25
+            scored.append((score, item))
+
+        ordered = [item for _, item in sorted(scored, key=lambda pair: pair[0], reverse=True)]
+        unique: list[ReferenceItem] = []
+        seen: set[str] = set()
+        for item in ordered:
+            key = item.citation.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(item)
+            if len(unique) >= top_k:
+                break
+        return unique
+
+    def _prioritize_cpl_references(self, references: list[ReferenceItem], top_k: int) -> list[ReferenceItem]:
+        if not references:
+            return []
+
+        scored: list[tuple[float, ReferenceItem]] = []
+        for item in references:
+            text = f"{item.citation} {item.title} {item.text}".lower()
+            score = float(item.score)
+            if item.citation in {"CASR 61.590", "CASR 61.610"}:
+                score += 2.6
+            elif item.citation in {"CASR 61.580", "CASR 61.585", "CASR 61.605"}:
+                score += 0.9
+            elif re.search(r"^CASR 61\.", item.citation):
+                score += 0.2
+            if item.regulation_type.upper() != "CASR":
+                score -= 1.2
+            if re.search(r"\baeronautical experience\b", text):
+                score += 0.55
+            if re.search(r"\bhours?\b", text) or re.search(r"\bflight time\b", text):
+                score += 0.45
+            if re.search(r"\bcommercial pilot licence\b", text) or re.search(r"\bcpl\b", text):
+                score += 0.35
+            if re.search(r"\.{5,}", item.text):
+                score -= 0.35
             scored.append((score, item))
 
         ordered = [item for _, item in sorted(scored, key=lambda pair: pair[0], reverse=True)]

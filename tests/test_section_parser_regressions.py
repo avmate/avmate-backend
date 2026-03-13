@@ -73,6 +73,75 @@ when requested by CASA under this Part.
         self.assertIn("CASR 61.020", citations)
         self.assertIn("CASR 61.025", citations)
 
+    def test_split_into_sections_prefers_operative_legislation_text_over_toc_duplicates(self) -> None:
+        text = """
+Civil Aviation Safety Regulations 1998
+Compilation No. 100
+Part 61 Flight crew licensing
+Table of contents
+61.395 Limitations on exercise of privileges of pilot licences—recent experience for certain passenger flight activities......................................123
+61.565 Aeronautical experience requirements for grant of private pilot licences—airship category........................................................................141
+61.570 Privileges of commercial pilot licences....................................................142
+61.590 Aeronautical experience requirements for grant of commercial pilot licences—aeroplane category...................................................................144
+61.610 Aeronautical experience requirements for grant of commercial pilot licences—aeroplane category...................................................................146
+
+Part 61 Flight crew licensing
+Subpart 61.E Pilot licences
+61.395 Limitations on exercise of privileges of pilot licences—recent experience for certain passenger flight activities
+61.400 Limitations on exercise of privileges of pilot licences—flight review
+
+61.395 Limitations on exercise of privileges of pilot licences—recent experience for certain passenger flight activities
+(1) The holder of a pilot licence is authorised to pilot, during take-off or landing, an aircraft of a particular category carrying a passenger by day only if the holder has, within the previous 90 days, conducted at least 3 take-offs and 3 landings.
+(2) The holder of a pilot licence is authorised to pilot, during take-off or landing, an aircraft of a particular category carrying a passenger at night only if the holder has, within the previous 90 days, conducted at night at least 3 take-offs and 3 landings.
+
+61.400 Limitations on exercise of privileges of pilot licences—flight review
+(1) The holder of a pilot licence is authorised to exercise the privileges of the licence only if the holder has completed a flight review for the licence within the previous 24 months.
+
+Flight crew licensing
+Part 61 Private pilot licences
+Subpart 61.H Aeronautical experience requirements for private pilot licences—applicants who have not completed integrated training courses
+Division 61.H.3
+Regulation 61.565
+61.565 Aeronautical experience requirements for grant of private pilot licences—airship category
+(1) An applicant for a private pilot licence with the airship category rating must have completed at least 25 hours of flight time as pilot of an airship.
+(2) The cross-country flight time required by paragraph (1) must include a flight of at least 25 nautical miles.
+Civil Aviation Safety Regulations 1998
+Compilation No. 100
+registered 29/10/2024
+
+Part 61 Flight crew licensing
+Subpart 61.I—Commercial pilot licences
+Division 61.I.2
+61.580 Requirements for grant of commercial pilot licences—general
+(1) An applicant for a commercial pilot licence must be at least 18 years of age.
+
+Part 61 Flight crew licensing
+Subpart 61.I—Commercial pilot licences
+Division 61.I.2
+61.590 Aeronautical experience requirements for grant of commercial pilot licences—aeroplane category
+(1) An applicant for a commercial pilot licence with the aeroplane category rating must have at least 150 hours of aeronautical experience.
+
+Part 61 Flight crew licensing
+Subpart 61.I—Commercial pilot licences
+Division 61.I.3
+61.610 Aeronautical experience requirements for grant of commercial pilot licences—aeroplane category
+(1) An applicant for a commercial pilot licence with the aeroplane category rating must have at least 200 hours of aeronautical experience.
+        """.strip()
+
+        sections = split_into_sections(text, regulation_type="CASR")
+        by_citation = {section["citation"]: section for section in sections}
+
+        self.assertIn("CASR 61.395", by_citation)
+        self.assertIn("CASR 61.565", by_citation)
+        self.assertIn("CASR 61.590", by_citation)
+        self.assertIn("CASR 61.610", by_citation)
+        self.assertIn("(1) The holder of a pilot licence is authorised", by_citation["CASR 61.395"]["text"])
+        self.assertIn("25 hours of flight time", by_citation["CASR 61.565"]["text"])
+        self.assertIn("150 hours of aeronautical experience", by_citation["CASR 61.590"]["text"])
+        self.assertIn("200 hours of aeronautical experience", by_citation["CASR 61.610"]["text"])
+        self.assertEqual(sum(1 for section in sections if section["citation"] == "CASR 61.395"), 1)
+        self.assertEqual(sum(1 for section in sections if section["citation"] == "CASR 61.565"), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

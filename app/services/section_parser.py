@@ -278,24 +278,76 @@ def _looks_like_toc_block(section_text: str) -> bool:
     lower = section_text[:900].lower()
     if "table of contents" in lower:
         return True
-    if LEGISLATION_PAGE_NOISE_PATTERN.search(lower):
-        return True
 
     lines = [line.strip() for line in section_text.splitlines()[:28] if line.strip()]
     if not lines:
         return False
+    dot_leader_lines = sum(1 for line in lines if "....." in line)
     toc_like = sum(
         1
         for line in lines
         if re.match(r"^\d{1,3}(?:\.\d{1,3}){0,4}[A-Za-z]?(?:\([0-9A-Za-z]+\))?\s+\S", line)
         and not re.search(r"[.!?]\s", line)
     )
+    numbered_paragraphs = sum(1 for line in lines if re.search(r"\(\d+\)", line))
     prose_like = sum(
         1
         for line in lines
         if len(line) >= 90 and re.search(r"[a-z]{3,}", line) and re.search(r"[.!?]", line)
     )
-    return toc_like >= 4 and prose_like <= 1
+    if dot_leader_lines >= 2 and prose_like == 0:
+        return True
+    if toc_like >= 4 and prose_like <= 1 and numbered_paragraphs == 0:
+        return True
+    if LEGISLATION_PAGE_NOISE_PATTERN.search(lower) and toc_like >= 3 and prose_like == 0 and numbered_paragraphs == 0:
+        return True
+    return False
+
+
+def _score_legislation_section_candidate(section: dict) -> float:
+    text = " ".join((section.get("text", "") or "").split())
+    title = " ".join((section.get("title", "") or "").split())
+    if not text:
+        return -9999.0
+
+    score = float(len(text))
+    if re.search(r"\(\d+\)", text):
+        score += 600.0
+    if re.search(r"\b(?:must|must not|authorised|contravenes|penalty|offence|requirement|required)\b", text, re.IGNORECASE):
+        score += 140.0
+    if re.search(r"\b(?:hours|aeronautical experience|flight time|take-offs|landings)\b", text, re.IGNORECASE):
+        score += 80.0
+    if re.search(r"\.{5,}", text):
+        score -= 950.0
+    if "table of contents" in text.lower():
+        score -= 1200.0
+    if LEGISLATION_PAGE_NOISE_PATTERN.search(text[:260]):
+        score -= 120.0
+    if len(text) < 180:
+        score -= 220.0
+    if title and "....." in title:
+        score -= 300.0
+    return score
+
+
+def _dedupe_legislation_sections(sections: list[dict]) -> list[dict]:
+    if not sections:
+        return []
+
+    best_by_citation: dict[str, tuple[float, dict]] = {}
+    order: list[str] = []
+    for section in sections:
+        citation = section["citation"]
+        candidate_score = _score_legislation_section_candidate(section)
+        current = best_by_citation.get(citation)
+        if current is None:
+            best_by_citation[citation] = (candidate_score, section)
+            order.append(citation)
+            continue
+        if candidate_score > current[0]:
+            best_by_citation[citation] = (candidate_score, section)
+
+    return [best_by_citation[citation][1] for citation in order if citation in best_by_citation]
 
 
 def _split_legislation_sections(text: str, regulation_type: str) -> list[dict]:
@@ -336,6 +388,8 @@ def _split_legislation_sections(text: str, regulation_type: str) -> list[dict]:
                 "text": section_text,
             }
         )
+
+    sections = _dedupe_legislation_sections(sections)
 
     if len(sections) < 5:
         return []

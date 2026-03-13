@@ -545,6 +545,30 @@ Additional notes unrelated to special alternate minima.
         ranked = self.service._prioritize_passenger_recency_references(refs, top_k=5)
         self.assertEqual(ranked[0].citation, "CASR 61.395")
 
+    def test_prioritize_cpl_references_promotes_cpl_hour_sections_over_toc_noise(self) -> None:
+        refs = [
+            _reference(
+                "CASR 61.565",
+                text="61.565 Aeronautical experience requirements for grant of private pilot licences—airship category......................................141 Subpart 61.I—Commercial pilot licences 142",
+                regulation_type="CASR",
+                score=0.99,
+            ),
+            _reference(
+                "CASR 61.590",
+                text="61.590 Aeronautical experience requirements for grant of commercial pilot licences—aeroplane category (1) An applicant must have at least 150 hours of aeronautical experience.",
+                regulation_type="CASR",
+                score=0.82,
+            ),
+            _reference(
+                "CASR 61.610",
+                text="61.610 Aeronautical experience requirements for grant of commercial pilot licences—aeroplane category (1) An applicant must have at least 200 hours of aeronautical experience.",
+                regulation_type="CASR",
+                score=0.81,
+            ),
+        ]
+        ranked = self.service._prioritize_cpl_references(refs, top_k=5)
+        self.assertIn(ranked[0].citation, {"CASR 61.590", "CASR 61.610"})
+
     def test_prioritize_fuel_requirement_references_promotes_casr_91_455_over_rotorcraft(self) -> None:
         profile = self.service._build_query_profile(
             "Under CASR Part 91, what are the fuel requirements for a small aeroplane (fixed-wing)?"
@@ -565,6 +589,36 @@ Additional notes unrelated to special alternate minima.
         ]
         ranked = self.service._prioritize_fuel_requirement_references(refs, profile, top_k=5)
         self.assertEqual(ranked[0].citation, "CASR 91.455")
+
+    def test_explicit_special_weather_query_prefers_page_39_parent_after_dedupe(self) -> None:
+        refs = [
+            _reference(
+                "AIP ENR 1.5 - 38 subsection 6.2",
+                text="6.2 Special Alternate Weather Minima......................................ENR 1.5 - 39",
+                score=0.97,
+            ),
+            _reference(
+                "AIP ENR 1.5 - 39 subsection 6.2.1",
+                text="6.2.1 Special alternate weather minima are available for specified approaches with dual ILS/VOR approach capability.",
+                score=0.85,
+            ),
+            _reference(
+                "AIP ENR 1.5 - 39 subsection 6.2.2",
+                text="6.2.2 Special alternate weather minima are identified on applicable instrument approach charts.",
+                score=0.84,
+            ),
+        ]
+
+        ranked = self.service._ensure_special_weather_parent_reference(
+            refs,
+            limit=5,
+            prefer_special_phrase=True,
+        )
+        ranked = self.service._dedupe_by_subsection_label(ranked, limit=5)
+        citations = [item.citation for item in ranked]
+
+        self.assertEqual(citations[0], "AIP ENR 1.5 - 39 subsection 6.2")
+        self.assertNotIn("AIP ENR 1.5 - 38 subsection 6.2", citations)
 
     def test_intent_seed_references_for_cpl_prefers_part_61_hour_requirements(self) -> None:
         service = SearchService(
