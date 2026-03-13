@@ -240,6 +240,8 @@ class SearchService:
             or bool(query_profile.get("qnh_intent"))
             or bool(query_profile.get("cpl_intent"))
             or bool(query_profile.get("speed_limit_intent"))
+            or bool(query_profile.get("passenger_recency_intent"))
+            or bool(query_profile.get("fuel_requirement_intent"))
         )
         if should_try_lexical_fallback:
             lexical_top_k = max(top_k, 12) if query_profile.get("qnh_intent") else top_k
@@ -262,7 +264,12 @@ class SearchService:
                         )
                     elif query_profile.get("qnh_intent"):
                         references = self._merge_references(references, lexical_fallback_refs, limit=max(top_k * 2, 10))
-                    elif query_profile.get("cpl_intent") or query_profile.get("speed_limit_intent"):
+                    elif (
+                        query_profile.get("cpl_intent")
+                        or query_profile.get("speed_limit_intent")
+                        or query_profile.get("passenger_recency_intent")
+                        or query_profile.get("fuel_requirement_intent")
+                    ):
                         references = self._merge_references(lexical_fallback_refs, references, limit=max(top_k * 2, 10))
         citation_seed_refs = self._requested_citation_seed_references(requested_citations, query_profile, top_k)
         if citation_seed_refs:
@@ -476,12 +483,29 @@ class SearchService:
             ("speed" in query_lower or "knots" in query_lower or "kts" in query_lower)
             and ("10000" in query_lower or "10,000" in query_lower or "10 000" in query_lower)
         )
+        passenger_recency_intent = (
+            any(token in query_lower for token in ("passenger", "passengers"))
+            and any(token in query_lower for token in ("recency", "recent", "currency"))
+        ) or (
+            any(token in query_lower for token in ("carry a passenger", "carry passengers"))
+            and any(token in query_lower for token in ("ppl", "pilot licence", "pilot license", "part 61"))
+        )
+        fuel_requirement_intent = (
+            "fuel" in query_lower
+            and any(token in query_lower for token in ("requirement", "requirements", "reserve"))
+        )
         if cpl_intent:
             terms.extend(["commercial", "pilot", "licence", "license", "cpl", "aeronautical", "experience", "hours", "part", "61"])
             phrases.extend(["commercial pilot licence", "aeronautical experience"])
         if speed_limit_intent:
             terms.extend(["speed", "limit", "below", "10000", "10,000", "knots", "kts", "250"])
             phrases.extend(["below 10000 feet", "below 10000 ft", "250 knots"])
+        if passenger_recency_intent:
+            terms.extend(["passenger", "recency", "recent", "experience", "ppl", "pilot", "licence", "license", "61.395"])
+            phrases.extend(["passenger recency", "recent experience", "carry passengers"])
+        if fuel_requirement_intent:
+            terms.extend(["fuel", "requirements", "requirement", "reserve", "fixed-wing", "aeroplane", "airplane", "91.455"])
+            phrases.extend(["fuel requirements", "final reserve fuel"])
 
         required_patterns: list[re.Pattern[str]] = []
         category_match = re.search(r"\bcat(?:egory)?\s*([abcd])\b", query_lower)
@@ -514,6 +538,12 @@ class SearchService:
             required_patterns.append(re.compile(r"\b(?:commercial|cpl)\b", re.IGNORECASE))
             required_patterns.append(re.compile(r"\b(?:pilot|licence|license|part\s*61)\b", re.IGNORECASE))
             required_patterns.append(re.compile(r"\b(?:hours|experience|aeronautical)\b", re.IGNORECASE))
+        if passenger_recency_intent:
+            required_patterns.append(re.compile(r"\bpassenger", re.IGNORECASE))
+            required_patterns.append(re.compile(r"\b(?:recent|recency|currency|experience)\b", re.IGNORECASE))
+        if fuel_requirement_intent:
+            required_patterns.append(re.compile(r"\bfuel\b", re.IGNORECASE))
+            required_patterns.append(re.compile(r"\b(?:requirement|requirements|reserve)\b", re.IGNORECASE))
         weather_minima_intent = (
             ("alternate" in query_lower)
             and ("weather" in query_lower)
@@ -565,6 +595,11 @@ class SearchService:
                 "licence",
                 "license",
                 "cpl",
+                "passenger",
+                "recency",
+                "currency",
+                "fuel",
+                "reserve",
             )
             if token in query_lower
         ]
@@ -601,6 +636,8 @@ class SearchService:
             "qnh_intent": qnh_intent,
             "cpl_intent": cpl_intent,
             "speed_limit_intent": speed_limit_intent,
+            "passenger_recency_intent": passenger_recency_intent,
+            "fuel_requirement_intent": fuel_requirement_intent,
             "explicit_subsection_labels": explicit_subsection_labels,
             "explicit_page_hints": explicit_page_hints,
             "heading_rollup_intent": heading_rollup_intent,
@@ -629,6 +666,8 @@ class SearchService:
         special_weather_minima_intent = bool(query_profile.get("special_weather_minima_intent"))
         cpl_intent = bool(query_profile.get("cpl_intent"))
         speed_limit_intent = bool(query_profile.get("speed_limit_intent"))
+        passenger_recency_intent = bool(query_profile.get("passenger_recency_intent"))
+        fuel_requirement_intent = bool(query_profile.get("fuel_requirement_intent"))
         explicit_subsection_labels = query_profile.get("explicit_subsection_labels", [])
         explicit_page_hints = query_profile.get("explicit_page_hints", [])
 
@@ -681,6 +720,14 @@ class SearchService:
             and re.search(r"\b(?:knots|kts|kt)\b", document_lower)
             and re.search(r"\b(?:10000|10,000|10 000|10\s*000)\b", document_lower)
         )
+        passenger_recency_evidence = bool(
+            re.search(r"\bpassenger", document_lower)
+            and re.search(r"\b(?:recent|recency|currency|experience)\b", document_lower)
+        )
+        fuel_requirement_evidence = bool(
+            re.search(r"\bfuel\b", document_lower)
+            and re.search(r"\b(?:requirement|requirements|reserve)\b", document_lower)
+        )
         precise_citation = self._is_precise_source_citation(citation, regulation_type)
         toc_penalty = self._table_of_contents_penalty(document)
 
@@ -698,6 +745,10 @@ class SearchService:
             if cpl_intent and not cpl_evidence and semantic_score < 0.9:
                 passes_gate = False
             if speed_limit_intent and not speed_limit_evidence and semantic_score < 0.9:
+                passes_gate = False
+            if passenger_recency_intent and not passenger_recency_evidence and semantic_score < 0.88:
+                passes_gate = False
+            if fuel_requirement_intent and not fuel_requirement_evidence and semantic_score < 0.88:
                 passes_gate = False
             if explicit_subsection_labels and not explicit_subsection_match and semantic_score < 0.94:
                 passes_gate = False
@@ -748,6 +799,10 @@ class SearchService:
             score += 0.2 if cpl_evidence else -0.24
         if speed_limit_intent:
             score += 0.24 if speed_limit_evidence else -0.26
+        if passenger_recency_intent:
+            score += 0.22 if passenger_recency_evidence else -0.24
+        if fuel_requirement_intent:
+            score += 0.2 if fuel_requirement_evidence else -0.22
         if explicit_subsection_labels:
             score += 0.24 if explicit_subsection_match else -0.22
         if explicit_page_hints:
@@ -826,6 +881,8 @@ class SearchService:
         qnh_intent = bool(query_profile.get("qnh_intent"))
         cpl_intent = bool(query_profile.get("cpl_intent"))
         speed_limit_intent = bool(query_profile.get("speed_limit_intent"))
+        passenger_recency_intent = bool(query_profile.get("passenger_recency_intent"))
+        fuel_requirement_intent = bool(query_profile.get("fuel_requirement_intent"))
         explicit_subsection_labels = query_profile.get("explicit_subsection_labels", [])
         explicit_page_hints = query_profile.get("explicit_page_hints", [])
 
@@ -890,6 +947,14 @@ class SearchService:
                 and re.search(r"\b(?:knots|kts|kt)\b", text_lower)
                 and re.search(r"\b(?:10000|10,000|10 000|10\s*000)\b", text_lower)
             )
+            passenger_recency_evidence = bool(
+                re.search(r"\bpassenger", text_lower)
+                and re.search(r"\b(?:recent|recency|currency|experience)\b", text_lower)
+            )
+            fuel_requirement_evidence = bool(
+                re.search(r"\bfuel\b", text_lower)
+                and re.search(r"\b(?:requirement|requirements|reserve)\b", text_lower)
+            )
             subsection = self._citation_subsection_label(citation)
             explicit_subsection_match = any(
                 subsection == label or subsection.startswith(f"{label}.")
@@ -920,6 +985,10 @@ class SearchService:
                 score += 0.24 if cpl_evidence else -0.28
             if speed_limit_intent:
                 score += 0.28 if speed_limit_evidence else -0.3
+            if passenger_recency_intent:
+                score += 0.26 if passenger_recency_evidence else -0.28
+            if fuel_requirement_intent:
+                score += 0.24 if fuel_requirement_evidence else -0.26
             if explicit_subsection_labels:
                 score += 0.24 if explicit_subsection_match else -0.24
             if explicit_page_hints:
@@ -961,7 +1030,14 @@ class SearchService:
 
         cpl_intent = bool(query_profile.get("cpl_intent"))
         speed_limit_intent = bool(query_profile.get("speed_limit_intent"))
-        if not (cpl_intent or speed_limit_intent):
+        passenger_recency_intent = bool(query_profile.get("passenger_recency_intent"))
+        fuel_requirement_intent = bool(query_profile.get("fuel_requirement_intent"))
+        if not (
+            cpl_intent
+            or speed_limit_intent
+            or passenger_recency_intent
+            or fuel_requirement_intent
+        ):
             return []
 
         query_terms = [term for term in query_profile.get("terms", []) if len(term) >= 3]
@@ -979,6 +1055,34 @@ class SearchService:
                     "aeronautical",
                     "experience",
                     "part 61",
+                ]
+            )
+            regulation_hints.extend(["CASR", None])
+        if passenger_recency_intent:
+            seed_terms.extend(
+                [
+                    "passenger",
+                    "recent",
+                    "recency",
+                    "experience",
+                    "pilot licence",
+                    "ppl",
+                    "61.395",
+                    "61.965",
+                ]
+            )
+            regulation_hints.extend(["CASR", None])
+        if fuel_requirement_intent:
+            seed_terms.extend(
+                [
+                    "fuel",
+                    "requirements",
+                    "requirement",
+                    "reserve",
+                    "fixed-wing",
+                    "aeroplane",
+                    "airplane",
+                    "91.455",
                 ]
             )
             regulation_hints.extend(["CASR", None])
@@ -1096,6 +1200,15 @@ class SearchService:
 
                 page_ref_lower = " ".join((reference.page_ref or "").split()).lower()
                 score = float(reference.score)
+                score -= self._table_of_contents_penalty(reference.text)
+                if re.search(r"\.{5,}", reference.text):
+                    score -= 0.22
+                if len(" ".join((reference.text or "").split())) < 110:
+                    score -= 0.08
+                if len(" ".join((reference.text or "").split())) > 120:
+                    score += 0.04
+                if re.search(r"[.!?]", reference.text):
+                    score += 0.02
                 if explicit_page_hints:
                     if page_ref_lower and any(page_ref_lower.startswith(hint) for hint in explicit_page_hints):
                         score += 0.03
@@ -1159,6 +1272,8 @@ class SearchService:
 
         cpl_intent = bool(query_profile.get("cpl_intent"))
         speed_limit_intent = bool(query_profile.get("speed_limit_intent"))
+        passenger_recency_intent = bool(query_profile.get("passenger_recency_intent"))
+        fuel_requirement_intent = bool(query_profile.get("fuel_requirement_intent"))
         if cpl_intent:
             cpl_identity = bool(
                 re.search(r"\b(?:commercial|cpl)\b", text_lower)
@@ -1178,6 +1293,34 @@ class SearchService:
                 score += 0.16
             if re.search(r"\bpart\s*61\b", text_lower) or re.search(r"\bpart\s*61\b", citation_lower):
                 score += 0.22
+
+        if passenger_recency_intent:
+            passenger_recency_evidence = bool(
+                re.search(r"\bpassenger", text_lower)
+                and re.search(r"\b(?:recent|recency|currency|experience)\b", text_lower)
+            )
+            if passenger_recency_evidence:
+                score += 0.42
+            else:
+                score -= 0.38
+            if re.search(r"\b61\.395\b", text_lower) or re.search(r"\b61\.395\b", citation_lower):
+                score += 0.3
+            if re.search(r"\bppl\b", text_lower) or re.search(r"\bpilot licence\b", text_lower):
+                score += 0.08
+
+        if fuel_requirement_intent:
+            fuel_requirement_evidence = bool(
+                re.search(r"\bfuel\b", text_lower)
+                and re.search(r"\b(?:requirement|requirements|reserve)\b", text_lower)
+            )
+            if fuel_requirement_evidence:
+                score += 0.38
+            else:
+                score -= 0.34
+            if re.search(r"\b91\.455\b", text_lower) or re.search(r"\b91\.455\b", citation_lower):
+                score += 0.28
+            if re.search(r"\bpart\s*91\b", text_lower) or re.search(r"\b91\.\d+\b", citation_lower):
+                score += 0.1
 
         if speed_limit_intent:
             speed_limit_evidence = bool(
@@ -2088,6 +2231,8 @@ class SearchService:
         intent_tokens = query_profile.get("intent_tokens", [])
         terms = query_profile.get("terms", [])
         qnh_intent = bool(query_profile.get("qnh_intent"))
+        passenger_recency_intent = bool(query_profile.get("passenger_recency_intent"))
+        fuel_requirement_intent = bool(query_profile.get("fuel_requirement_intent"))
 
         if required_patterns and not all(pattern.search(text) for pattern in required_patterns):
             return False
@@ -2096,6 +2241,10 @@ class SearchService:
             return False
 
         if qnh_intent and "qnh" not in text:
+            return False
+        if passenger_recency_intent and ("passenger" not in text or not re.search(r"\b(?:recent|recency|currency|experience)\b", text)):
+            return False
+        if fuel_requirement_intent and ("fuel" not in text or not re.search(r"\b(?:requirement|requirements|reserve)\b", text)):
             return False
 
         if intent_tokens:

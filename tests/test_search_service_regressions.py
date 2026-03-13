@@ -224,6 +224,18 @@ Additional notes unrelated to special alternate minima.
         )
         self.assertTrue(profile["heading_rollup_intent"])
 
+    def test_build_query_profile_sets_passenger_recency_intent(self) -> None:
+        profile = self.service._build_query_profile(
+            "What are the specific recency requirements for a PPL to carry passengers?"
+        )
+        self.assertTrue(profile["passenger_recency_intent"])
+
+    def test_build_query_profile_sets_fuel_requirement_intent(self) -> None:
+        profile = self.service._build_query_profile(
+            "Under CASR Part 91, what are the fuel requirements for a small aeroplane?"
+        )
+        self.assertTrue(profile["fuel_requirement_intent"])
+
     def test_expand_heading_subsection_references_includes_parent_and_children(self) -> None:
         service = SearchService(
             embeddings=None,
@@ -424,6 +436,95 @@ Additional notes unrelated to special alternate minima.
 
         self.assertTrue(seeded)
         self.assertEqual(seeded[0].citation, "CASR 61.395")
+
+    def test_requested_citation_seed_references_prefer_operational_text_over_toc_line(self) -> None:
+        service = SearchService(
+            embeddings=None,
+            vector_store=None,
+            canonical_store=_StubCanonicalStore(
+                [
+                    _section(
+                        "CASR 61.395",
+                        title="CASR 61.395 Passenger recency contents line",
+                        text="61.395 Limitations on exercise of privileges of pilot licences—recent experience for certain passenger flight activities......................................123",
+                        page_ref="",
+                        regulation_type="CASR",
+                    ),
+                    _section(
+                        "CASR 61.395",
+                        title="CASR 61.395 Passenger recency operative text",
+                        text="61.395 Limitations on exercise of privileges of pilot licences—recent experience for certain passenger flight activities (1) The holder of a pilot licence is authorised to pilot an aircraft carrying passengers only if the holder meets the recent experience requirements in this regulation.",
+                        page_ref="",
+                        regulation_type="CASR",
+                    ),
+                ]
+            ),
+        )
+        profile = service._build_query_profile("CASR 61.395 passenger recency")
+        seeded = service._requested_citation_seed_references(["casr 61.395"], profile, top_k=5)
+
+        self.assertTrue(seeded)
+        self.assertIn("authorised to pilot an aircraft carrying passengers", seeded[0].text.lower())
+
+    def test_intent_seed_references_for_passenger_recency_prefers_casr_61_395(self) -> None:
+        service = SearchService(
+            embeddings=None,
+            vector_store=None,
+            canonical_store=_StubCanonicalStore(
+                [
+                    _section(
+                        "CASR 121.250",
+                        title="CASR 121.250 Carriage of restricted persons",
+                        text="The aeroplane operator exposition must include procedures for carrying a restricted person.",
+                        page_ref="",
+                        regulation_type="CASR",
+                    ),
+                    _section(
+                        "CASR 61.395",
+                        title="CASR 61.395 Passenger recency",
+                        text="61.395 Limitations on exercise of privileges of pilot licences—recent experience for certain passenger flight activities.",
+                        page_ref="",
+                        regulation_type="CASR",
+                    ),
+                ]
+            ),
+        )
+        profile = service._build_query_profile("What are the specific recency requirements for a PPL to carry passengers?")
+        seeded = service._intent_seed_references(profile, top_k=5)
+
+        self.assertTrue(seeded)
+        self.assertEqual(seeded[0].citation, "CASR 61.395")
+
+    def test_intent_seed_references_for_fuel_requirements_prefers_casr_91_455(self) -> None:
+        service = SearchService(
+            embeddings=None,
+            vector_store=None,
+            canonical_store=_StubCanonicalStore(
+                [
+                    _section(
+                        "CASR 91.475",
+                        title="CASR 91.475 Fuelling aircraft—fire fighting equipment",
+                        text="91.475 Fuelling aircraft—fire fighting equipment.",
+                        page_ref="",
+                        regulation_type="CASR",
+                    ),
+                    _section(
+                        "CASR 91.455",
+                        title="CASR 91.455 Fuel requirements",
+                        text="91.455 Fuel requirements. The Part 91 Manual of Standards may prescribe requirements relating to fuel for aircraft.",
+                        page_ref="",
+                        regulation_type="CASR",
+                    ),
+                ]
+            ),
+        )
+        profile = service._build_query_profile(
+            "Under CASR Part 91, what are the fuel requirements for a small aeroplane (fixed-wing)?"
+        )
+        seeded = service._intent_seed_references(profile, top_k=5)
+
+        self.assertTrue(seeded)
+        self.assertEqual(seeded[0].citation, "CASR 91.455")
 
     def test_intent_seed_references_for_cpl_prefers_part_61_hour_requirements(self) -> None:
         service = SearchService(
