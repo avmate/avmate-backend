@@ -100,9 +100,13 @@ class IndexerService:
                                 overlap=self._settings.chunk_overlap_words,
                             )
                         )
+                        section_header = f"{section['citation']} {section['title']}".strip()
                         for chunk_index, chunk in enumerate(chunks):
                             ids.append(f"{section['section_id']}::{chunk_index}")
-                            doc_chunks.append(chunk)
+                            # Prepend citation + title so embeddings encode the section topic.
+                            # Helps table-heavy sections (e.g. ENR 1.4) surface for natural-language queries.
+                            embed_text = f"{section_header}\n{chunk}" if section_header else chunk
+                            doc_chunks.append(embed_text)
                             metadatas.append(
                                 {
                                     "section_id": section["section_id"],
