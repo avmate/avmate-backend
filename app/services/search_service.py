@@ -100,23 +100,46 @@ class SearchService:
             section_ids = _extract_section_ids(raw)
             distances = (raw.get("distances") or [[]])[0]
 
-        # 5. Resolve section_ids → full metadata (regulation_type, citation, text, etc.)
-        sections_by_id = {
-            s["section_id"]: s
-            for s in self._canonical_store.get_sections_by_ids(section_ids)
+        # 5. BM25 retrieval (parallel path — runs alongside semantic, not just fallback)
+        bm25_scores: dict[str, float] = {
+            sid: score
+            for sid, score in self._canonical_store.search_sections_bm25(
+                search_text, limit=fetch_k, regulation_type=regulation_hint
+            )
+            if sid not in seen_ids
         }
 
+        # 6. Resolve all unique section_ids → full metadata
+        all_retrieve_ids = list(dict.fromkeys(section_ids + [s for s in bm25_scores if s not in section_ids]))
+        sections_by_id = {
+            s["section_id"]: s
+            for s in self._canonical_store.get_sections_by_ids(all_retrieve_ids)
+        }
+
+        # Build merged candidates: score = max(semantic, bm25) per section
         semantic_candidates: list[tuple[float, dict]] = []
+        merged_sids: set[str] = set()
         for sid, dist in zip(section_ids, distances):
-            if sid in seen_ids:
+            if sid in seen_ids or sid in merged_sids:
                 continue
             section = sections_by_id.get(sid)
             if not section:
                 continue
-            score = max(0.0, 1.0 - float(dist))
+            sem_score = max(0.0, 1.0 - float(dist))
+            score = max(sem_score, bm25_scores.get(sid, 0.0))
             semantic_candidates.append((score, section))
+            merged_sids.add(sid)
 
-        # 6. Chapter-aware filter — prevents cross-chapter drift
+        # Add BM25-only hits (not in semantic results)
+        for sid, bm25_score in bm25_scores.items():
+            if sid in seen_ids or sid in merged_sids:
+                continue
+            section = sections_by_id.get(sid)
+            if section:
+                semantic_candidates.append((bm25_score, section))
+                merged_sids.add(sid)
+
+        # 7. Chapter-aware filter — prevents cross-chapter drift
         #    e.g. "ENR 1.5 subsection 6.2" must not pull ENR 1.4 results
         if explicit_citations:
             chapter_prefixes = [
@@ -134,27 +157,18 @@ class SearchService:
                 if chapter_matched:
                     semantic_candidates = chapter_matched
 
-        # 7. Merge: exact hits first (score=1.0), semantic fill after
+        # 8. Merge: exact hits first (score=1.0), hybrid semantic+BM25 fill after
         candidates: list[tuple[float, dict]] = list(exact_candidates)
         for score, sec in semantic_candidates:
             if sec["section_id"] not in seen_ids:
                 candidates.append((score, sec))
                 seen_ids.add(sec["section_id"])
 
-        # 8. Lexical fallback when results are sparse
-        if len(candidates) < top_k:
-            terms = keywords or [t for t in query.lower().split() if len(t) >= 4]
-            lexical = self._canonical_store.search_sections_by_terms(
-                terms,
-                limit=top_k * 10,
-                regulation_type=regulation_hint,
-            )
-            for sec in lexical:
-                if sec["section_id"] not in seen_ids:
-                    candidates.append((0.4, sec))
-                    seen_ids.add(sec["section_id"])
+        # 9. Citation reranking — boost candidates that match the explicit citation prefix
+        if explicit_citations and candidates:
+            candidates = _rerank_by_citation(candidates, explicit_citations)
 
-        # 9. Rank, deduplicate, take top_k
+        # 10. Rank, deduplicate, take top_k
         candidates.sort(key=lambda x: x[0], reverse=True)
         references = [_section_to_ref(score, sec) for score, sec in candidates[:top_k]]
 
@@ -196,6 +210,36 @@ class SearchService:
 def _detect_family(citation: str) -> str | None:
     m = _FAMILY_RE.match(citation.strip())
     return m.group(1).upper() if m else None
+
+
+def _rerank_by_citation(
+    candidates: list[tuple[float, dict]],
+    explicit_citations: list[str],
+) -> list[tuple[float, dict]]:
+    """Boost candidates matching the explicit citation; penalise over-broad hits.
+
+    Boost  +0.15: citation starts with the requested prefix (direct match / child section).
+    Penalty -0.10: requested citation starts with this candidate's citation (candidate is
+                   a parent/ancestor — too broad for a specific section request).
+    Score is clamped to [0.0, 1.0] after adjustment; exact-lookup hits at 1.0 are unchanged.
+    """
+    result = []
+    for score, sec in candidates:
+        if score >= 1.0:
+            result.append((score, sec))
+            continue
+        cit_lower = sec.get("citation", "").lower()
+        adjustment = 0.0
+        for ec in explicit_citations:
+            ec_lower = ec.lower()
+            if cit_lower.startswith(ec_lower):
+                adjustment = 0.15
+                break
+            if ec_lower.startswith(cit_lower + " ") or ec_lower.startswith(cit_lower + "."):
+                adjustment = -0.10
+                break
+        result.append((max(0.0, min(1.0, score + adjustment)), sec))
+    return result
 
 
 def _extract_chapter_prefix(citation: str) -> str:

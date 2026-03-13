@@ -62,6 +62,48 @@ TEST_CASES = [
         expected_citation="AIP ENR 1.5 6.2",
         expected_phrase="Special alternate weather minima",
     ),
+    # --- CASR exact-rule queries ---
+    ExpectedQuery(
+        query="What are the minimum flight hours for a commercial pilot licence?",
+        expected_citation="CASR 61",
+        expected_phrase="hour",
+    ),
+    ExpectedQuery(
+        query="What are the recent experience requirements for night VFR?",
+        expected_citation="CASR 61",
+        expected_phrase="night",
+    ),
+    ExpectedQuery(
+        query="minimum fuel reserve for a VFR day flight CASR Part 91",
+        expected_citation="CASR 91",
+        expected_phrase="fuel",
+    ),
+    ExpectedQuery(
+        query="What is the minimum safe altitude for low flying?",
+        expected_citation="CASR 91",
+        expected_phrase="500",
+    ),
+    # --- AIP table-driven operational queries ---
+    ExpectedQuery(
+        query="What is the transition altitude in Australia?",
+        expected_citation="AIP ENR 1.7",
+        expected_phrase="transition",
+    ),
+    ExpectedQuery(
+        query="VFR visibility requirements by day in class G airspace",
+        expected_citation="AIP ENR 1.2",
+        expected_phrase="visibility",
+    ),
+    ExpectedQuery(
+        query="CTAF procedures non-towered aerodrome radio calls",
+        expected_citation="AIP",
+        expected_phrase="CTAF",
+    ),
+    ExpectedQuery(
+        query="What does AIP ENR 1.5 section 10.2 cover?",
+        expected_citation="AIP ENR 1.5 10.2",
+        expected_phrase="speed",
+    ),
 ]
 
 

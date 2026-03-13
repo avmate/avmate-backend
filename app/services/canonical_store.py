@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import datetime
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import func, or_, select, text, update
 
 from app.db import init_db, session_scope
 from app.models import Document, IngestionRun, RegulationSection
+
+_FTS5_RESERVED = frozenset({"and", "or", "not"})
 
 
 class CanonicalStore:
@@ -164,6 +167,83 @@ class CanonicalStore:
         with session_scope() as session:
             rows = session.scalars(stmt.limit(limit)).all()
         return [self._row_to_dict(row) for row in rows]
+
+    def rebuild_fts_index(self) -> None:
+        """Truncate and repopulate the FTS5 BM25 index from regulation_sections.
+
+        Call once after a full reindex completes. Fast bulk INSERT via raw SQL.
+        """
+        with session_scope() as session:
+            session.execute(text("DELETE FROM regulation_sections_fts"))
+            session.execute(text("""
+                INSERT INTO regulation_sections_fts (section_id, regulation_type, citation, title, text)
+                SELECT id, regulation_type, citation, title, text
+                FROM regulation_sections
+            """))
+
+    def search_sections_bm25(
+        self,
+        query: str,
+        *,
+        limit: int = 40,
+        regulation_type: str | None = None,
+    ) -> list[tuple[str, float]]:
+        """BM25-ranked full-text search via SQLite FTS5.
+
+        Returns list of (section_id, normalized_score) where score is in [0.0, 0.8].
+        bm25() returns negative values (lower = better); we invert to positive ascending.
+        """
+        tokens = [
+            t for t in re.findall(r"[a-zA-Z0-9.]+", query)
+            if len(t) >= 2 and t.lower() not in _FTS5_RESERVED
+        ]
+        if not tokens:
+            return []
+        fts_query = " OR ".join(tokens)
+
+        try:
+            with session_scope() as session:
+                params: dict = {"q": fts_query, "lim": limit}
+                if regulation_type:
+                    params["rt"] = regulation_type
+                    rows = session.execute(
+                        text("""
+                            SELECT section_id, bm25(regulation_sections_fts) AS score
+                            FROM regulation_sections_fts
+                            WHERE regulation_sections_fts MATCH :q
+                              AND regulation_type = :rt
+                            ORDER BY score
+                            LIMIT :lim
+                        """),
+                        params,
+                    ).fetchall()
+                else:
+                    rows = session.execute(
+                        text("""
+                            SELECT section_id, bm25(regulation_sections_fts) AS score
+                            FROM regulation_sections_fts
+                            WHERE regulation_sections_fts MATCH :q
+                            ORDER BY score
+                            LIMIT :lim
+                        """),
+                        params,
+                    ).fetchall()
+        except Exception:
+            return []
+
+        if not rows:
+            return []
+
+        # bm25() returns negative values: min (most negative) = best match
+        # Normalize to [0.0, 0.8]: best → 0.8, worst → 0.0
+        raw_scores = [row[1] for row in rows]
+        min_s, max_s = min(raw_scores), max(raw_scores)
+        score_range = max_s - min_s or 1.0
+
+        return [
+            (row[0], 0.8 * (1.0 - (row[1] - min_s) / score_range))
+            for row in rows
+        ]
 
     def _row_to_dict(self, row: RegulationSection) -> dict:
         return {

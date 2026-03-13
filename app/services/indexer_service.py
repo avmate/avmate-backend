@@ -145,6 +145,12 @@ class IndexerService:
                     failed_documents += 1
                     continue
         finally:
+            # Rebuild FTS5 BM25 index from all ingested sections
+            try:
+                self._canonical_store.rebuild_fts_index()
+            except Exception as exc:
+                print(f"FTS5 index rebuild failed (non-fatal): {exc}")
+
             self._canonical_store.finish_run(
                 run_id,
                 status="completed" if failed_documents == 0 else "completed_with_errors",
