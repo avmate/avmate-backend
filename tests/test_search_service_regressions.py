@@ -527,6 +527,45 @@ Additional notes unrelated to special alternate minima.
         self.assertTrue(seeded)
         self.assertEqual(seeded[0].citation, "CASR 91.455")
 
+    def test_prioritize_passenger_recency_references_promotes_casr_61_395(self) -> None:
+        refs = [
+            _reference(
+                "CASR 121.250",
+                text="121.250 Carriage of restricted persons.",
+                regulation_type="CASR",
+                score=0.98,
+            ),
+            _reference(
+                "CASR 61.395",
+                text="61.395 Limitations on exercise of privileges of pilot licences—recent experience for certain passenger flight activities.",
+                regulation_type="CASR",
+                score=0.91,
+            ),
+        ]
+        ranked = self.service._prioritize_passenger_recency_references(refs, top_k=5)
+        self.assertEqual(ranked[0].citation, "CASR 61.395")
+
+    def test_prioritize_fuel_requirement_references_promotes_casr_91_455_over_rotorcraft(self) -> None:
+        profile = self.service._build_query_profile(
+            "Under CASR Part 91, what are the fuel requirements for a small aeroplane (fixed-wing)?"
+        )
+        refs = [
+            _reference(
+                "CASR 91.430",
+                text="91.430 Safety when rotorcraft operating on ground.",
+                regulation_type="CASR",
+                score=0.99,
+            ),
+            _reference(
+                "CASR 91.455",
+                text="91.455 Fuel requirements. The Part 91 Manual of Standards may prescribe requirements relating to fuel for aircraft.",
+                regulation_type="CASR",
+                score=0.91,
+            ),
+        ]
+        ranked = self.service._prioritize_fuel_requirement_references(refs, profile, top_k=5)
+        self.assertEqual(ranked[0].citation, "CASR 91.455")
+
     def test_intent_seed_references_for_cpl_prefers_part_61_hour_requirements(self) -> None:
         service = SearchService(
             embeddings=None,

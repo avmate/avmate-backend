@@ -306,6 +306,10 @@ class SearchService:
         if query_profile.get("qnh_intent"):
             references = self._prioritize_qnh_references(references, query_profile, top_k)
             references = self._ensure_parent_subsection_reference(references, parent_label="5.3", limit=top_k)
+        if query_profile.get("passenger_recency_intent"):
+            references = self._prioritize_passenger_recency_references(references, top_k)
+        if query_profile.get("fuel_requirement_intent"):
+            references = self._prioritize_fuel_requirement_references(references, query_profile, top_k)
         if query_profile.get("heading_rollup_intent"):
             references = self._expand_heading_subsection_references(references, query_profile, top_k)
         if explicit_page_hints:
@@ -428,8 +432,18 @@ class SearchService:
 
     def _select_answer_reference(self, query_profile: dict, references: list[ReferenceItem]) -> ReferenceItem:
         lead = references[0]
+        if query_profile.get("passenger_recency_intent"):
+            for item in references:
+                if item.citation == "CASR 61.395":
+                    return self._prefer_operational_reference_text(item, query_profile)
+            return self._prefer_operational_reference_text(lead, query_profile)
+        if query_profile.get("fuel_requirement_intent"):
+            for item in references:
+                if item.citation == "CASR 91.455":
+                    return self._prefer_operational_reference_text(item, query_profile)
+            return self._prefer_operational_reference_text(lead, query_profile)
         if not query_profile.get("heading_rollup_intent"):
-            return lead
+            return self._prefer_operational_reference_text(lead, query_profile)
 
         query_lower = str(query_profile.get("query_lower", "") or "")
         criteria_query = any(
@@ -448,8 +462,8 @@ class SearchService:
         for item in references:
             text = f"{item.title} {item.text}".lower()
             if "approach" in text and ("capability" in text or "must include" in text):
-                return item
-        return lead
+                return self._prefer_operational_reference_text(item, query_profile)
+        return self._prefer_operational_reference_text(lead, query_profile)
 
     def _build_query_profile(self, query: str) -> dict:
         query_lower = query.lower()
@@ -1170,6 +1184,44 @@ class SearchService:
         references = self._filter_final_references(references, query_profile, narrowed_limit)
         return references[:narrowed_limit]
 
+    def _prefer_operational_reference_text(self, reference: ReferenceItem, query_profile: dict) -> ReferenceItem:
+        if not self._canonical_store:
+            return reference
+        text = " ".join((reference.text or "").split())
+        if not text:
+            return reference
+        if not re.search(r"\.{5,}", text) and len(text) >= 120:
+            return reference
+        if reference.regulation_type.upper() == "AIP":
+            return reference
+
+        raw_citation = " ".join((reference.citation or "").split())
+        if not raw_citation:
+            return reference
+        sections = self._canonical_store.search_sections_by_terms([raw_citation], limit=500, regulation_type=reference.regulation_type)
+        best_ref = reference
+        best_score = -999.0
+        for section in sections:
+            section_citation = " ".join((str(section.get("citation", "") or "")).split())
+            if section_citation.lower() != raw_citation.lower():
+                continue
+            candidate = self._build_reference_from_section(section, query_profile, score=reference.score)
+            if candidate is None:
+                continue
+            candidate_text = " ".join((candidate.text or "").split())
+            score = 0.0
+            score -= self._table_of_contents_penalty(candidate.text)
+            if re.search(r"\.{5,}", candidate_text):
+                score -= 0.25
+            if len(candidate_text) >= 120:
+                score += 0.15
+            if re.search(r"[.!?]", candidate_text):
+                score += 0.05
+            if score > best_score:
+                best_score = score
+                best_ref = candidate
+        return best_ref
+
     def _requested_citation_seed_references(
         self,
         requested_citations: list[str],
@@ -1292,6 +1344,7 @@ class SearchService:
         speed_limit_intent = bool(query_profile.get("speed_limit_intent"))
         passenger_recency_intent = bool(query_profile.get("passenger_recency_intent"))
         fuel_requirement_intent = bool(query_profile.get("fuel_requirement_intent"))
+        fixed_wing_hint = bool(query_profile.get("fixed_wing_hint"))
         if cpl_intent:
             cpl_identity = bool(
                 re.search(r"\b(?:commercial|cpl)\b", text_lower)
@@ -1339,6 +1392,8 @@ class SearchService:
                 score += 0.28
             if re.search(r"\bpart\s*91\b", text_lower) or re.search(r"\b91\.\d+\b", citation_lower):
                 score += 0.1
+            if fixed_wing_hint and "rotorcraft" in text_lower:
+                score -= 0.55
 
         if speed_limit_intent:
             speed_limit_evidence = bool(
@@ -2196,6 +2251,80 @@ class SearchService:
                     break
 
         return unique[:top_k]
+
+    def _prioritize_passenger_recency_references(self, references: list[ReferenceItem], top_k: int) -> list[ReferenceItem]:
+        if not references:
+            return []
+
+        scored: list[tuple[float, ReferenceItem]] = []
+        for item in references:
+            text = f"{item.citation} {item.title} {item.text}".lower()
+            score = float(item.score)
+            if item.citation == "CASR 61.395":
+                score += 2.4
+            elif item.citation == "CASR 61.965":
+                score += 1.0
+            elif re.search(r"^CASR 61\.", item.citation):
+                score += 0.3
+            if item.regulation_type.upper() != "CASR":
+                score -= 1.2
+            if re.search(r"\bpassenger", text) and re.search(r"\b(?:recent|recency|currency|experience)\b", text):
+                score += 0.4
+            if re.search(r"\.{5,}", item.text):
+                score -= 0.25
+            scored.append((score, item))
+
+        ordered = [item for _, item in sorted(scored, key=lambda pair: pair[0], reverse=True)]
+        unique: list[ReferenceItem] = []
+        seen: set[str] = set()
+        for item in ordered:
+            key = item.citation.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(item)
+            if len(unique) >= top_k:
+                break
+        return unique
+
+    def _prioritize_fuel_requirement_references(
+        self,
+        references: list[ReferenceItem],
+        query_profile: dict,
+        top_k: int,
+    ) -> list[ReferenceItem]:
+        if not references:
+            return []
+
+        fixed_wing_hint = bool(query_profile.get("fixed_wing_hint"))
+        scored: list[tuple[float, ReferenceItem]] = []
+        for item in references:
+            text = f"{item.citation} {item.title} {item.text}".lower()
+            score = float(item.score)
+            if item.citation == "CASR 91.455":
+                score += 2.5
+            elif item.citation in {"CASR 91.475", "CASR 91.490", "CASR 91.500"}:
+                score += 0.2
+            if item.regulation_type.upper() != "CASR":
+                score -= 1.2
+            if fixed_wing_hint and "rotorcraft" in text:
+                score -= 1.5
+            if re.search(r"\bfuel\b", text) and re.search(r"\b(?:requirement|requirements|reserve)\b", text):
+                score += 0.5
+            scored.append((score, item))
+
+        ordered = [item for _, item in sorted(scored, key=lambda pair: pair[0], reverse=True)]
+        unique: list[ReferenceItem] = []
+        seen: set[str] = set()
+        for item in ordered:
+            key = item.citation.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(item)
+            if len(unique) >= top_k:
+                break
+        return unique
 
     def _dedupe_references(
         self,
