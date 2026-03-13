@@ -135,12 +135,15 @@ class LLMAnswerService:
             f"User query:\n{query_clean}\n\n"
             "Return JSON object with keys:\n"
             "- intent (short label)\n"
-            "- rewritten_query (clear retrieval-focused rewrite preserving original meaning)\n"
+            "- regulation_type (one of: AIP, CASR, CAR, CAO, MOS, CAA — or null if the query does not reference a specific regulation family)\n"
+            "- rewritten_query (clear retrieval-focused rewrite preserving original meaning, using official regulatory terminology)\n"
             "- keywords (5 to 10 short search terms/phrases grounded in the query)\n"
             "Constraints:\n"
             "- Do not add facts not implied by the query.\n"
             "- Keep rewritten_query under 240 characters.\n"
             "- keywords must be plain strings.\n"
+            "- regulation_type must be a single string or null, not a list.\n"
+            "- For 'stable approach' or 'stabilised approach' queries, set regulation_type to CASR.\n"
         )
 
         body = {
@@ -184,8 +187,16 @@ class LLMAnswerService:
         ]
         keywords = list(dict.fromkeys(keywords))[:10]
 
+        raw_reg_type = parsed.get("regulation_type")
+        regulation_type = (
+            raw_reg_type.strip().upper()
+            if isinstance(raw_reg_type, str) and raw_reg_type.strip()
+            else None
+        )
+
         return {
             "intent": intent,
+            "regulation_type": regulation_type,
             "rewritten_query": rewritten_query[:240],
             "keywords": keywords,
         }

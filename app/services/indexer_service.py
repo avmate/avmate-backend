@@ -107,6 +107,7 @@ class IndexerService:
                                 {
                                     "section_id": section["section_id"],
                                     "citation": section["citation"],
+                                    "regulation_type": document.get("type", "UNKNOWN"),
                                     "section_index": section_index,
                                     "chunk_index": chunk_index,
                                 }

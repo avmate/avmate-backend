@@ -34,12 +34,20 @@ class VectorStore:
             metadatas=metadatas,
         )
 
-    def query(self, query_embeddings: list[list[float]], top_k: int) -> dict[str, Any]:
-        return self._collection.query(
-            query_embeddings=query_embeddings,
-            n_results=top_k,
-            include=["documents", "metadatas", "distances"],
-        )
+    def query(
+        self,
+        query_embeddings: list[list[float]],
+        top_k: int,
+        where: dict | None = None,
+    ) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {
+            "query_embeddings": query_embeddings,
+            "n_results": top_k,
+            "include": ["documents", "metadatas", "distances"],
+        }
+        if where:
+            kwargs["where"] = where
+        return self._collection.query(**kwargs)
 
     @property
     def available(self) -> bool:
@@ -69,7 +77,12 @@ class UnavailableVectorStore:
     ) -> None:
         raise RuntimeError(self._error)
 
-    def query(self, query_embeddings: list[list[float]], top_k: int) -> dict[str, Any]:
+    def query(
+        self,
+        query_embeddings: list[list[float]],
+        top_k: int,
+        where: dict | None = None,
+    ) -> dict[str, Any]:
         raise RuntimeError(self._error)
 
     @property
