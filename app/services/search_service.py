@@ -235,6 +235,7 @@ class SearchService:
         lexical_fallback_refs: list[ReferenceItem] = []
         should_try_lexical_fallback = (
             not references
+            or bool(requested_citations)
             or bool(query_profile.get("weather_minima_intent"))
             or bool(query_profile.get("qnh_intent"))
             or bool(query_profile.get("cpl_intent"))
@@ -253,10 +254,22 @@ class SearchService:
                     top_weather_hit = bool(re.search(r"\b(?:special\s+)?alternate\s+weather\s+minima\b", top_text))
                     if top_toc or not top_weather_hit:
                         references = lexical_fallback_refs
+                    elif requested_citations:
+                        references = self._merge_references(
+                            lexical_fallback_refs,
+                            references,
+                            limit=max(top_k * 2, 10),
+                        )
                     elif query_profile.get("qnh_intent"):
                         references = self._merge_references(references, lexical_fallback_refs, limit=max(top_k * 2, 10))
                     elif query_profile.get("cpl_intent") or query_profile.get("speed_limit_intent"):
                         references = self._merge_references(lexical_fallback_refs, references, limit=max(top_k * 2, 10))
+        citation_seed_refs = self._requested_citation_seed_references(requested_citations, query_profile, top_k)
+        if citation_seed_refs:
+            if not references:
+                references = citation_seed_refs
+            else:
+                references = self._merge_references(citation_seed_refs, references, limit=max(top_k * 2, 10))
         intent_refs = self._intent_seed_references(query_profile, top_k)
         if intent_refs:
             if not references:
@@ -1034,6 +1047,72 @@ class SearchService:
         references = self._drop_malformed_citations(references, limit=wide_limit)
         references = self._filter_final_references(references, query_profile, narrowed_limit)
         return references[:narrowed_limit]
+
+    def _requested_citation_seed_references(
+        self,
+        requested_citations: list[str],
+        query_profile: dict,
+        top_k: int,
+    ) -> list[ReferenceItem]:
+        if not self._canonical_store or not requested_citations:
+            return []
+
+        requested_normalized = [" ".join((citation or "").split()).lower() for citation in requested_citations if citation]
+        if not requested_normalized:
+            return []
+
+        explicit_page_hints = [" ".join((hint or "").split()).lower() for hint in query_profile.get("explicit_page_hints", []) if hint]
+        ranked: list[tuple[float, ReferenceItem]] = []
+        seen_section_ids: set[str] = set()
+        for requested in requested_normalized:
+            request_terms = [requested]
+            request_terms.extend(token for token in re.findall(r"[a-z0-9.()/-]+", requested) if len(token) >= 3)
+            sections = self._canonical_store.search_sections_by_terms(
+                list(dict.fromkeys(request_terms)),
+                limit=2000,
+            )
+            for section in sections:
+                section_id = str(section.get("section_id", "") or "")
+                if section_id and section_id in seen_section_ids:
+                    continue
+
+                raw_citation = " ".join((str(section.get("citation", "") or "")).split())
+                if raw_citation.lower() != requested:
+                    continue
+
+                regulation_type = str(section.get("regulation_type", "UNKNOWN") or "UNKNOWN")
+                if not self._is_precise_source_citation(raw_citation, regulation_type):
+                    continue
+
+                reference = self._build_reference_from_section(
+                    section,
+                    query_profile,
+                    score=0.92,
+                )
+                if reference is None:
+                    continue
+                if not self._is_precise_citation(reference.citation, reference.regulation_type):
+                    continue
+
+                page_ref_lower = " ".join((reference.page_ref or "").split()).lower()
+                score = float(reference.score)
+                if explicit_page_hints:
+                    if page_ref_lower and any(page_ref_lower.startswith(hint) for hint in explicit_page_hints):
+                        score += 0.03
+                    else:
+                        score -= 0.06
+                reference.score = round(max(0.0, min(1.0, score)), 4)
+                ranked.append((reference.score, reference))
+                if section_id:
+                    seen_section_ids.add(section_id)
+
+        if not ranked:
+            return []
+
+        references = self._dedupe_references(ranked, max(top_k * 3, 10))
+        if explicit_page_hints:
+            references = self._enforce_explicit_page_hints(references, explicit_page_hints, limit=max(top_k * 2, 8))
+        return self._drop_malformed_citations(references, limit=max(top_k * 2, 8))
 
     def _score_intent_seed_candidate(self, section: dict, query_profile: dict) -> float:
         raw_citation = str(section.get("citation", "") or "")

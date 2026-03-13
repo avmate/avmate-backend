@@ -396,6 +396,35 @@ Additional notes unrelated to special alternate minima.
         self.assertTrue(seeded)
         self.assertEqual(seeded[0].citation, "AIP ENR 1.5 - 39 subsection 6.2")
 
+    def test_requested_citation_seed_references_match_exact_non_aip_citation(self) -> None:
+        service = SearchService(
+            embeddings=None,
+            vector_store=None,
+            canonical_store=_StubCanonicalStore(
+                [
+                    _section(
+                        "CASR 61.215",
+                        title="CASR 61.215 Unrelated Part 61 provision",
+                        text="61.215 Some unrelated provision.",
+                        page_ref="",
+                        regulation_type="CASR",
+                    ),
+                    _section(
+                        "CASR 61.395",
+                        title="CASR 61.395 Passenger recency",
+                        text="61.395 Limitations on exercise of privileges of pilot licences—recent experience for certain passenger flight activities.",
+                        page_ref="",
+                        regulation_type="CASR",
+                    ),
+                ]
+            ),
+        )
+        profile = service._build_query_profile("CASR 61.395 passenger recency")
+        seeded = service._requested_citation_seed_references(["casr 61.395"], profile, top_k=5)
+
+        self.assertTrue(seeded)
+        self.assertEqual(seeded[0].citation, "CASR 61.395")
+
     def test_intent_seed_references_for_cpl_prefers_part_61_hour_requirements(self) -> None:
         service = SearchService(
             embeddings=None,

@@ -13,6 +13,7 @@ from pathlib import Path
 import requests
 from sqlalchemy import select
 
+from app.config import get_settings, load_manifest_file
 from app.db import session_scope
 from app.models import RegulationSection
 
@@ -54,10 +55,49 @@ REFERENCE_CITATION_HINT_PATTERN = re.compile(
 PART_HINT_PATTERN = re.compile(r"\bpart\s+(\d+)\b", re.IGNORECASE)
 OUT_OF_SCOPE_HINT_PATTERNS = (
     re.compile(r"\b(?:hr|behavioral|operational|general practice)\b", re.IGNORECASE),
-    re.compile(r"\b(?:casa workbook|syllabus|handbook|guide|advisory circular)\b", re.IGNORECASE),
+    re.compile(r"\b(?:casa workbook|syllabus|guide|advisory circular)\b", re.IGNORECASE),
     re.compile(r"\b(?:bo?m|meteorology|human factors)\b", re.IGNORECASE),
     re.compile(r"\b(?:airservices|naips|atsb|transport safety investigation act)\b", re.IGNORECASE),
 )
+
+
+def _load_available_catalog_tokens() -> set[str]:
+    settings = get_settings()
+    if not settings.local_manifest_path.exists():
+        return set()
+
+    tokens: set[str] = set()
+    try:
+        manifest = load_manifest_file(settings.local_manifest_path)
+    except Exception:
+        return set()
+
+    for item in manifest:
+        for value in (item.get("path", ""), item.get("type", ""), item.get("title", "")):
+            text = " ".join(str(value).split()).lower()
+            if not text:
+                continue
+            tokens.add(text)
+            for token in re.findall(r"[a-z0-9./_-]+", text):
+                if len(token) >= 3:
+                    tokens.add(token)
+    return tokens
+
+
+AVAILABLE_CATALOG_TOKENS = _load_available_catalog_tokens()
+CATALOG_FAMILY_ALIASES: dict[str, tuple[str, ...]] = {
+    "mos": (" mos", "manual of standards", "part 91 mos", "part 61 mos", "part 121 mos"),
+    "vfrg": ("vfrg",),
+    "ersa": ("ersa",),
+    "dap": ("dap",),
+    "airservices": ("airservices", "naips"),
+    "atsb": ("atsb", "transport safety investigation act", "asir"),
+    "bom": ("bom", "graphical area forecast", "gfa"),
+    "workbook": ("workbook",),
+    "syllabus": ("syllabus",),
+    "advisory": ("advisory circular",),
+    "website": ("website", "casa website"),
+}
 
 
 @dataclass(frozen=True)
@@ -216,7 +256,14 @@ def _is_out_of_scope_case(reference_hint: str, category: str) -> bool:
     combined = f"{hint} {cat}".strip()
     if not combined:
         return False
-    return any(pattern.search(combined) for pattern in OUT_OF_SCOPE_HINT_PATTERNS)
+    if any(pattern.search(combined) for pattern in OUT_OF_SCOPE_HINT_PATTERNS):
+        return True
+
+    for family, aliases in CATALOG_FAMILY_ALIASES.items():
+        if any(alias in combined for alias in aliases):
+            if not any(alias.strip() in token for alias in aliases for token in AVAILABLE_CATALOG_TOKENS):
+                return True
+    return False
 
 
 def load_query_bank_cases(paths_csv: str) -> list[QueryCase]:
