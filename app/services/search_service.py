@@ -53,14 +53,17 @@ class SearchService:
         explicit_families = {_detect_family(c) for c in explicit_citations} - {None}
 
         # 2. Exact citation lookup — deterministic, bypasses semantic for structured queries
+        #    Only fires for specific section citations, not broad family/part references.
+        #    "CASR 61.385" or "AIP ENR 1.5 6.2" → yes; "CASR 91" or "AIP ENR 1.5" → no.
         seen_ids: set[str] = set()
         exact_candidates: list[tuple[float, dict]] = []
-        if explicit_citations:
-            for citation in explicit_citations:
-                for sec in self._canonical_store.get_sections_by_citation_prefix(citation):
-                    if sec["section_id"] not in seen_ids:
-                        exact_candidates.append((1.0, sec))
-                        seen_ids.add(sec["section_id"])
+        for citation in explicit_citations:
+            if not _is_specific_citation(citation):
+                continue
+            for sec in self._canonical_store.get_sections_by_citation_prefix(citation):
+                if sec["section_id"] not in seen_ids:
+                    exact_candidates.append((1.0, sec))
+                    seen_ids.add(sec["section_id"])
 
         # 3. LLM interprets query for better semantic retrieval
         regulation_hint: str | None = None
@@ -210,6 +213,27 @@ class SearchService:
 def _detect_family(citation: str) -> str | None:
     m = _FAMILY_RE.match(citation.strip())
     return m.group(1).upper() if m else None
+
+
+def _is_specific_citation(citation: str) -> bool:
+    """Return True only for citations specific enough to warrant exact DB lookup.
+
+    Broad family/part references like "CASR 91" or "AIP ENR 1.5" return alphabetically-early
+    sections that have nothing to do with the query. Only look up section-level citations.
+
+    AIP:  requires a section number — at least 4 whitespace-separated tokens
+          e.g. "AIP ENR 1.5 6.2" (4 tokens) → yes; "AIP ENR 1.5" (3 tokens) → no
+    CASR: requires a dot in the part number — e.g. "CASR 61.385" → yes; "CASR 61" → no
+    """
+    parts = citation.strip().split()
+    if not parts:
+        return False
+    family = parts[0].upper()
+    if family == "AIP":
+        return len(parts) >= 4
+    if len(parts) >= 2:
+        return "." in parts[1]
+    return False
 
 
 def _rerank_by_citation(

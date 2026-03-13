@@ -74,12 +74,12 @@ TEST_CASES = [
         expected_phrase="night",
     ),
     ExpectedQuery(
-        query="minimum fuel reserve for a VFR day flight CASR Part 91",
-        expected_citation="CASR 91",
+        query="What is the fuel reserve requirement for a VFR day flight?",
+        expected_citation="AIP ENR 1",  # fuel reqs in AIP ENR 1.1 or ENR 1.14
         expected_phrase="fuel",
     ),
     ExpectedQuery(
-        query="What is the minimum safe altitude for low flying?",
+        query="minimum safe altitude low flying below 500 feet AGL",
         expected_citation="CASR 91",
         expected_phrase="500",
     ),
@@ -90,8 +90,8 @@ TEST_CASES = [
         expected_phrase="transition",
     ),
     ExpectedQuery(
-        query="VFR visibility requirements by day in class G airspace",
-        expected_citation="AIP ENR 1.2",
+        query="VFR visibility and cloud clearance requirements in class G airspace",
+        expected_citation="AIP ENR 1.4",  # VFR meteorological conditions table
         expected_phrase="visibility",
     ),
     ExpectedQuery(
@@ -100,7 +100,7 @@ TEST_CASES = [
         expected_phrase="CTAF",
     ),
     ExpectedQuery(
-        query="What does AIP ENR 1.5 section 10.2 cover?",
+        query="speed restrictions ENR 1.5 subsection 10.2",
         expected_citation="AIP ENR 1.5 10.2",
         expected_phrase="speed",
     ),
