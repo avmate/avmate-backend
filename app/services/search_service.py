@@ -264,6 +264,7 @@ class SearchService:
             or bool(query_profile.get("fuel_requirement_intent"))
             or bool(query_profile.get("cao_intent"))
             or bool(query_profile.get("fatigue_hours_intent"))
+            or bool(query_profile.get("stabilised_approach_intent"))
         )
         if should_try_lexical_fallback:
             lexical_top_k = max(top_k, 12) if query_profile.get("qnh_intent") else top_k
@@ -349,6 +350,8 @@ class SearchService:
             references = self._prioritize_fuel_requirement_references(references, query_profile, top_k)
         if query_profile.get("cao_intent") or query_profile.get("fatigue_hours_intent"):
             references = self._prioritize_cao_references(references, query_profile, top_k)
+        if query_profile.get("stabilised_approach_intent"):
+            references = self._prioritize_stabilised_approach_references(references, top_k)
         if query_profile.get("heading_rollup_intent"):
             references = self._expand_heading_subsection_references(references, query_profile, top_k)
         if explicit_page_hints:
@@ -376,6 +379,7 @@ class SearchService:
             or query_profile.get("speed_limit_intent")
             or query_profile.get("cao_intent")
             or query_profile.get("fatigue_hours_intent")
+            or query_profile.get("stabilised_approach_intent")
         ):
             backup_refs = self._intent_seed_references(query_profile, top_k)
             references = self._drop_malformed_citations(backup_refs, limit=top_k)
@@ -623,6 +627,15 @@ class SearchService:
             "fuel" in query_lower
             and any(token in query_lower for token in ("requirement", "requirements", "reserve"))
         )
+        # Stabilised approach — user may write "stable" or "stabilised"; regulations say "stabilised".
+        stabilised_approach_intent = any(
+            token in query_lower
+            for token in ("stable approach", "stabilised approach", "stabilized approach", "stabilised approach criteria",
+                          "stable approach criteria", "approach gate", "approach criteria")
+        ) or (
+            any(token in query_lower for token in ("stable", "stabilised", "stabilized"))
+            and any(token in query_lower for token in ("approach", "gate", "criteria"))
+        )
         fixed_wing_hint = any(token in query_lower for token in ("fixed-wing", "aeroplane", "airplane"))
         if cpl_intent:
             terms.extend(["commercial", "pilot", "licence", "license", "cpl", "aeronautical", "experience", "hours", "part", "61"])
@@ -648,6 +661,9 @@ class SearchService:
         if fuel_requirement_intent:
             terms.extend(["fuel", "requirements", "requirement", "reserve", "fixed-wing", "aeroplane", "airplane", "91.455"])
             phrases.extend(["fuel requirements", "final reserve fuel"])
+        if stabilised_approach_intent:
+            terms.extend(["stabilised", "approach", "criteria", "exposition", "135.175", "121.200", "operator", "procedures"])
+            phrases.extend(["stabilised approach", "stable approach", "approach criteria", "stabilised approach requirements"])
 
         required_patterns: list[re.Pattern[str]] = []
         category_match = re.search(r"\bcat(?:egory)?\s*([abcd])\b", query_lower)
@@ -692,6 +708,10 @@ class SearchService:
         if fuel_requirement_intent:
             required_patterns.append(re.compile(r"\bfuel\b", re.IGNORECASE))
             required_patterns.append(re.compile(r"\b(?:requirement|requirements|reserve)\b", re.IGNORECASE))
+        if stabilised_approach_intent:
+            required_patterns.append(re.compile(r"\bstabili[sz]ed?\b", re.IGNORECASE))
+            required_patterns.append(re.compile(r"\bapproach\b", re.IGNORECASE))
+
         weather_minima_intent = (
             ("alternate" in query_lower)
             and ("weather" in query_lower)
@@ -841,6 +861,7 @@ class SearchService:
             "cao_intent": cao_intent,
             "cao_doc_number": cao_doc_number,
             "fatigue_hours_intent": fatigue_hours_intent,
+            "stabilised_approach_intent": stabilised_approach_intent,
         }
 
     def _combine_score(
@@ -876,6 +897,7 @@ class SearchService:
         explicit_page_hints = query_profile.get("explicit_page_hints", [])
         cao_intent = bool(query_profile.get("cao_intent"))
         cao_doc_number = str(query_profile.get("cao_doc_number") or "")
+        stabilised_approach_intent = bool(query_profile.get("stabilised_approach_intent"))
 
         citation_lower = citation.lower()
         document_lower = document.lower()
@@ -933,6 +955,10 @@ class SearchService:
             re.search(r"\bfuel\b", document_lower)
             and re.search(r"\b(?:requirement|requirements|reserve)\b", document_lower)
         )
+        stabilised_approach_evidence = bool(
+            re.search(r"\bstabili[sz]ed?\b", document_lower)
+            and re.search(r"\bapproach\b", document_lower)
+        )
         precise_citation = self._is_precise_source_citation(citation, regulation_type)
         toc_penalty = self._table_of_contents_penalty(document)
 
@@ -986,6 +1012,8 @@ class SearchService:
                 passes_gate = False
             # CAO intent: block non-CAO results unless they score extremely high semantically.
             if cao_intent and str(regulation_type or "").upper() != "CAO" and semantic_score < 0.93:
+                passes_gate = False
+            if stabilised_approach_intent and not stabilised_approach_evidence and semantic_score < 0.88:
                 passes_gate = False
             if not precise_citation and semantic_score < 0.99:
                 passes_gate = False
@@ -1050,6 +1078,13 @@ class SearchService:
                     score += 0.12
             else:
                 score -= 0.35
+        if stabilised_approach_intent:
+            score += 0.22 if stabilised_approach_evidence else -0.24
+            # CASR 135.175 and CASR 121.200 are the controlling authorities.
+            if re.search(r"\b(?:135\.175|121\.200|121\.205)\b", citation_lower):
+                score += 0.20
+            if str(regulation_type or "").upper() not in {"CASR", "CAR"}:
+                score -= 0.18
         if explicit_subsection_labels:
             score += 0.24 if explicit_subsection_match else -0.22
         if explicit_page_hints:
@@ -1310,6 +1345,7 @@ class SearchService:
         fuel_requirement_intent = bool(query_profile.get("fuel_requirement_intent"))
         fatigue_hours_intent = bool(query_profile.get("fatigue_hours_intent"))
         cao_intent = bool(query_profile.get("cao_intent"))
+        stabilised_approach_intent = bool(query_profile.get("stabilised_approach_intent"))
         if not (
             missed_approach_intent
             or raim_intent
@@ -1320,6 +1356,7 @@ class SearchService:
             or fuel_requirement_intent
             or fatigue_hours_intent
             or cao_intent
+            or stabilised_approach_intent
         ):
             return []
 
@@ -1450,6 +1487,21 @@ class SearchService:
         elif cao_intent:
             # Generic CAO routing when no specific fatigue sub-intent was detected.
             regulation_hints.extend(["CAO", None])
+        if stabilised_approach_intent:
+            seed_terms.extend(
+                [
+                    "stabilised",
+                    "approach",
+                    "criteria",
+                    "stable approach",
+                    "stabilised approach",
+                    "exposition",
+                    "procedures",
+                    "135.175",
+                    "121.200",
+                ]
+            )
+            regulation_hints.extend(["CASR", None])
 
         seed_terms = list(dict.fromkeys(term for term in seed_terms if len(term.strip()) >= 3))
         if not seed_terms:
@@ -1854,6 +1906,15 @@ class SearchService:
             )
         )
 
+    def _is_stabilised_approach_query(self, query_lower: str) -> bool:
+        return bool(
+            any(token in query_lower for token in ("stable approach", "stabilised approach", "stabilized approach"))
+            or (
+                any(token in query_lower for token in ("stable", "stabilised", "stabilized"))
+                and any(token in query_lower for token in ("approach", "criteria", "gate"))
+            )
+        )
+
     def _build_answer(self, query: str, top_reference: ReferenceItem, references: list[ReferenceItem]) -> str:
         flattened = " ".join(top_reference.text.split())
         query_lower = query.lower()
@@ -1866,6 +1927,17 @@ class SearchService:
                 f"{top_reference.citation}: CAO 48.1 limits maximum flying hours for flight crew. "
                 f"{sentence} "
                 "Refer to the applicable appendix table for the specific limit relevant to your operation type."
+            )
+        if self._is_stabilised_approach_query(query_lower):
+            cit_set = {r.citation for r in references}
+            controlling = next(
+                (c for c in ("CASR 135.175", "CASR 121.200") if c in cit_set),
+                top_reference.citation,
+            )
+            return (
+                f"{controlling}: an operator's exposition must include procedures for conducting stabilised "
+                "approaches. The specific gate heights and criteria (typically 1,000 ft IMC / 500 ft VMC) "
+                "are defined in the operator's operations manual in accordance with the regulatory requirement."
             )
 
         if self._query_targets_circling_minima(query) and category:
@@ -1954,6 +2026,14 @@ class SearchService:
                 f"In plain English: CAO 48.1 sets the maximum number of flying hours a flight crew member may accumulate "
                 "within set periods (day, week, 28 days, and year). The actual limits depend on the operation type and "
                 "are specified in the appendix tables. You must not exceed these limits regardless of other rostering arrangements."
+            )
+        if self._is_stabilised_approach_query(query_lower):
+            return (
+                "In plain English: CASR requires air operators to have written procedures in their exposition "
+                "for conducting stabilised approaches. A stabilised approach means the aircraft is established on "
+                "the correct flight path with stable power, attitude, speed and configuration by a defined gate "
+                "height — typically 1,000 ft in IMC and 500 ft in VMC. If not stabilised by the gate, a go-around "
+                "is required."
             )
 
         if "alternate" in query_lower and "weather" in query_lower and any(label.startswith("6.2") for label in subsection_map):
@@ -2060,6 +2140,14 @@ class SearchService:
                 "for the maximum 28-day flying hours permitted for their operation type. "
                 "If the additional duty would breach the limit, the crew member must not accept it "
                 "regardless of roster instructions."
+            )
+        if self._is_stabilised_approach_query(query_lower):
+            return (
+                "Example: An RPT operator's exposition specifies that all approaches must be stabilised "
+                "by 1,000 ft AAL in instrument conditions and 500 ft AAL in visual conditions. "
+                "A crew on final approach at 700 ft IMC notices the aircraft is 15 knots fast and "
+                "not yet configured. Because they are inside the IMC gate and not stabilised, "
+                "they must immediately initiate a go-around."
             )
 
         if "alternate" in query_lower and "weather" in query_lower and any(label.startswith("6.2") for label in subsection_map):
@@ -3079,6 +3167,20 @@ class SearchService:
         return self._dedupe_references(
             [(r.score, r) for r in cao_refs], max(top_k * 2, top_k)
         )[:top_k]
+
+    def _prioritize_stabilised_approach_references(
+        self,
+        references: list[ReferenceItem],
+        top_k: int,
+    ) -> list[ReferenceItem]:
+        """Promote CASR 135.175 / CASR 121.200 for stabilised approach queries."""
+        PRIORITY_CITATIONS = {"CASR 135.175", "CASR 121.200", "CASR 121.205"}
+        priority = [r for r in references if r.citation in PRIORITY_CITATIONS]
+        rest = [r for r in references if r.citation not in PRIORITY_CITATIONS]
+        # Keep only CASR results in the final set.
+        casr_rest = [r for r in rest if r.regulation_type.upper() == "CASR"]
+        merged = priority + casr_rest
+        return merged[:top_k] if merged else references[:top_k]
 
     def _filter_final_references(
         self,
