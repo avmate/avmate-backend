@@ -79,8 +79,6 @@ WEATHER_MINIMA_PRIORITY_SUBSECTIONS = ("6.2", "6.2.1", "6.2.2", "6.2.3", "6.2.4"
 HEADING_ROLLUP_HINTS = (
     "criteria",
     "criterion",
-    "requirement",
-    "requirements",
     "overview",
     "explain",
     "what does",
@@ -494,6 +492,7 @@ class SearchService:
             "fuel" in query_lower
             and any(token in query_lower for token in ("requirement", "requirements", "reserve"))
         )
+        fixed_wing_hint = any(token in query_lower for token in ("fixed-wing", "aeroplane", "airplane"))
         if cpl_intent:
             terms.extend(["commercial", "pilot", "licence", "license", "cpl", "aeronautical", "experience", "hours", "part", "61"])
             phrases.extend(["commercial pilot licence", "aeronautical experience"])
@@ -638,6 +637,7 @@ class SearchService:
             "speed_limit_intent": speed_limit_intent,
             "passenger_recency_intent": passenger_recency_intent,
             "fuel_requirement_intent": fuel_requirement_intent,
+            "fixed_wing_hint": fixed_wing_hint,
             "explicit_subsection_labels": explicit_subsection_labels,
             "explicit_page_hints": explicit_page_hints,
             "heading_rollup_intent": heading_rollup_intent,
@@ -668,6 +668,7 @@ class SearchService:
         speed_limit_intent = bool(query_profile.get("speed_limit_intent"))
         passenger_recency_intent = bool(query_profile.get("passenger_recency_intent"))
         fuel_requirement_intent = bool(query_profile.get("fuel_requirement_intent"))
+        fixed_wing_hint = bool(query_profile.get("fixed_wing_hint"))
         explicit_subsection_labels = query_profile.get("explicit_subsection_labels", [])
         explicit_page_hints = query_profile.get("explicit_page_hints", [])
 
@@ -750,6 +751,10 @@ class SearchService:
                 passes_gate = False
             if fuel_requirement_intent and not fuel_requirement_evidence and semantic_score < 0.88:
                 passes_gate = False
+            if passenger_recency_intent and str(regulation_type or "").upper() != "CASR" and semantic_score < 0.97:
+                passes_gate = False
+            if fuel_requirement_intent and "part 91" in query_lower and str(regulation_type or "").upper() != "CASR" and semantic_score < 0.97:
+                passes_gate = False
             if explicit_subsection_labels and not explicit_subsection_match and semantic_score < 0.94:
                 passes_gate = False
             if explicit_page_hints and not explicit_page_hint_match and semantic_score < 0.97:
@@ -801,8 +806,14 @@ class SearchService:
             score += 0.24 if speed_limit_evidence else -0.26
         if passenger_recency_intent:
             score += 0.22 if passenger_recency_evidence else -0.24
+            if str(regulation_type or "").upper() != "CASR":
+                score -= 0.3
         if fuel_requirement_intent:
             score += 0.2 if fuel_requirement_evidence else -0.22
+            if "part 91" in query_lower and str(regulation_type or "").upper() != "CASR":
+                score -= 0.34
+            if fixed_wing_hint and "rotorcraft" in document_lower:
+                score -= 0.4
         if explicit_subsection_labels:
             score += 0.24 if explicit_subsection_match else -0.22
         if explicit_page_hints:
@@ -883,6 +894,7 @@ class SearchService:
         speed_limit_intent = bool(query_profile.get("speed_limit_intent"))
         passenger_recency_intent = bool(query_profile.get("passenger_recency_intent"))
         fuel_requirement_intent = bool(query_profile.get("fuel_requirement_intent"))
+        fixed_wing_hint = bool(query_profile.get("fixed_wing_hint"))
         explicit_subsection_labels = query_profile.get("explicit_subsection_labels", [])
         explicit_page_hints = query_profile.get("explicit_page_hints", [])
 
@@ -987,8 +999,14 @@ class SearchService:
                 score += 0.28 if speed_limit_evidence else -0.3
             if passenger_recency_intent:
                 score += 0.26 if passenger_recency_evidence else -0.28
+                if regulation_type.upper() != "CASR":
+                    score -= 0.32
             if fuel_requirement_intent:
                 score += 0.24 if fuel_requirement_evidence else -0.26
+                if "part 91" in query_profile.get("query_lower", "") and regulation_type.upper() != "CASR":
+                    score -= 0.34
+                if fixed_wing_hint and "rotorcraft" in text_lower:
+                    score -= 0.4
             if explicit_subsection_labels:
                 score += 0.24 if explicit_subsection_match else -0.24
             if explicit_page_hints:
@@ -2233,6 +2251,7 @@ class SearchService:
         qnh_intent = bool(query_profile.get("qnh_intent"))
         passenger_recency_intent = bool(query_profile.get("passenger_recency_intent"))
         fuel_requirement_intent = bool(query_profile.get("fuel_requirement_intent"))
+        fixed_wing_hint = bool(query_profile.get("fixed_wing_hint"))
 
         if required_patterns and not all(pattern.search(text) for pattern in required_patterns):
             return False
@@ -2245,6 +2264,12 @@ class SearchService:
         if passenger_recency_intent and ("passenger" not in text or not re.search(r"\b(?:recent|recency|currency|experience)\b", text)):
             return False
         if fuel_requirement_intent and ("fuel" not in text or not re.search(r"\b(?:requirement|requirements|reserve)\b", text)):
+            return False
+        if passenger_recency_intent and item.regulation_type.upper() != "CASR":
+            return False
+        if fuel_requirement_intent and "part 91" in str(query_profile.get("query_lower", "")) and item.regulation_type.upper() != "CASR":
+            return False
+        if fuel_requirement_intent and fixed_wing_hint and "rotorcraft" in text:
             return False
 
         if intent_tokens:

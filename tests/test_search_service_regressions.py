@@ -229,6 +229,7 @@ Additional notes unrelated to special alternate minima.
             "What are the specific recency requirements for a PPL to carry passengers?"
         )
         self.assertTrue(profile["passenger_recency_intent"])
+        self.assertFalse(profile["heading_rollup_intent"])
 
     def test_build_query_profile_sets_fuel_requirement_intent(self) -> None:
         profile = self.service._build_query_profile(
