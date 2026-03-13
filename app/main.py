@@ -157,7 +157,12 @@ def ready(request: Request, response: Response) -> ReadyResponse:
     if not embeddings.is_loaded:
         embeddings.ensure_loading()
     collection_count = vector_store.count() if vector_store.available else 0
-    ready_state = vector_store.available and collection_count > 0 and embeddings.is_loaded
+    ready_state = (
+        vector_store.available
+        and collection_count > 0
+        and embeddings.is_loaded
+        and not _indexing_in_progress
+    )
     if ready_state:
         reason = "ready"
         vector_status = "ready"
@@ -166,7 +171,7 @@ def ready(request: Request, response: Response) -> ReadyResponse:
         if not vector_store.available:
             reason = f"vector_store_unavailable: {vector_store.error}"
             vector_status = "unavailable"
-        elif collection_count == 0 and _indexing_in_progress:
+        elif _indexing_in_progress:
             reason = "indexing_in_progress"
             vector_status = "indexing"
         elif collection_count == 0:
@@ -176,6 +181,7 @@ def ready(request: Request, response: Response) -> ReadyResponse:
             reason = "embedding_warmup"
             vector_status = "warming"
         response.status_code = 503
+    response.headers["X-Index-Status"] = vector_status
     return ReadyResponse(
         ready=ready_state,
         service=settings.app_name,
@@ -192,6 +198,7 @@ def ready(request: Request, response: Response) -> ReadyResponse:
 def search(
     request: Request,
     payload: SearchRequest,
+    response: Response,
     search_service: SearchService = Depends(get_search_service),
 ) -> SearchResponse:
     request_id = _request_id(request)
@@ -212,6 +219,12 @@ def search(
             status_code=503,
             detail=f"Vector store unavailable: {vector_store.error}. Delete chroma_db and rebuild the index. request_id={request_id}",
         )
+    if _indexing_in_progress:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Index rebuild in progress — partial corpus would return unreliable results. Retry in 60 seconds. request_id={request_id}",
+            headers={"Retry-After": "60", "X-Index-Status": "indexing"},
+        )
     if vector_store.count() == 0:
         if settings.auto_index_on_startup:
             _ensure_background_index()
@@ -231,6 +244,7 @@ def search(
         raise HTTPException(status_code=503, detail=f"{detail} request_id={request_id}")
     try:
         result = search_service.search(query, payload.top_k)
+        response.headers["X-Index-Status"] = "ready"
         return result.model_copy(update={"request_id": request_id})
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Search unavailable: {exc}. request_id={request_id}") from exc
