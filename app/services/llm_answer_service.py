@@ -135,7 +135,7 @@ class LLMAnswerService:
             f"User query:\n{query_clean}\n\n"
             "Return JSON object with keys:\n"
             "- intent (short label)\n"
-            "- regulation_type (one of: AIP, CASR, CAR, CAO, MOS, CAA — or null if the query does not reference a specific regulation family)\n"
+            "- regulation_type (one of: AIP, CASR, CAR, CAO, MOS, CAA — or null)\n"
             "- rewritten_query (clear retrieval-focused rewrite preserving original meaning, using official regulatory terminology)\n"
             "- keywords (5 to 10 short search terms/phrases grounded in the query)\n"
             "Constraints:\n"
@@ -143,7 +143,8 @@ class LLMAnswerService:
             "- Keep rewritten_query under 240 characters.\n"
             "- keywords must be plain strings.\n"
             "- regulation_type must be a single string or null, not a list.\n"
-            "- For 'stable approach' or 'stabilised approach' queries, set regulation_type to CASR.\n"
+            "- Set regulation_type ONLY when the query explicitly names a regulation family (e.g. 'CASR 61', 'AIP ENR'). Set null for topic-only queries like 'QNH', 'fuel reserve', 'circling radius'.\n"
+            "- For 'stable approach' or 'stabilised approach' queries without explicit family, set regulation_type to null.\n"
         )
 
         body = {

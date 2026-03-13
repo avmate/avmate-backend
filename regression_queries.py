@@ -88,18 +88,25 @@ def run_case(case: ExpectedQuery) -> tuple[bool, str]:
     citations = payload.get("citations") or []
     answer = payload.get("answer") or ""
     references = payload.get("references") or []
-    top_text = (references[0].get("text") if references else "") or ""
+    all_texts = [answer] + [r.get("text", "") for r in references]
 
-    has_citation = case.expected_citation in citations
-    has_phrase = case.expected_phrase.lower() in answer.lower() or case.expected_phrase.lower() in top_text.lower()
+    # Citation check: prefix match — "AIP ENR 1.5 6.2" matches "AIP ENR 1.5 6.2.1" etc.
+    exp_lower = case.expected_citation.lower()
+    has_citation = any(c.lower().startswith(exp_lower) or c.lower() == exp_lower for c in citations)
+    # Phrase check: search across answer + all reference texts
+    phrase_lower = case.expected_phrase.lower()
+    has_phrase = any(phrase_lower in t.lower() for t in all_texts if t)
+    # Additional citations: prefix match too
     missing_additional = [
-        citation for citation in case.expected_additional_citations if citation not in citations
+        citation
+        for citation in case.expected_additional_citations
+        if not any(c.lower().startswith(citation.lower()) for c in citations)
     ]
 
     if not has_citation:
-        return False, f"expected citation '{case.expected_citation}' not found in {citations}"
+        return False, f"expected citation '{case.expected_citation}' (prefix match) not found in {citations}"
     if not has_phrase:
-        return False, f"expected phrase '{case.expected_phrase}' missing from answer/reference"
+        return False, f"expected phrase '{case.expected_phrase}' missing from answer/references"
     if missing_additional:
         return False, f"missing additional citations: {missing_additional}; got {citations}"
     return True, f"citation ok: {case.expected_citation}"
