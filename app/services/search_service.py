@@ -119,8 +119,10 @@ class SearchService:
             if citation_matched:
                 candidates = citation_matched
 
-        # 6. Lexical fallback when semantic results are sparse
-        if len(candidates) < top_k:
+        # 6. Lexical fallback when semantic results are sparse OR low-confidence
+        # (table-heavy sections like ENR 1.4 don't embed well, so keyword search supplements)
+        top_score = candidates[0][0] if candidates else 0.0
+        if len(candidates) < top_k or top_score < 0.3:
             terms = keywords or [t for t in query.lower().split() if len(t) >= 4]
             lexical = self._canonical_store.search_sections_by_terms(
                 terms,
