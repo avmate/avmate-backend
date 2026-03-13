@@ -216,19 +216,25 @@ def _split_aip_sections(text: str) -> list[dict]:
     if not matches:
         return []
 
-    sections: list[dict] = []
+    raw: list[dict] = []
     for index, match in enumerate(matches):
+        # Skip TOC entries: headings with dot-leaders like "1.18 Speed Restrictions...ENR 1.5-18"
+        if "....." in match.group("heading"):
+            continue
+
         start = match.start()
         end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
         section_text = text[start:end].strip()
-        if len(section_text) < 80:
+        if len(section_text) < 200:
+            continue
+        if _looks_like_toc_block(section_text):
             continue
 
         label = match.group("label")
         citation = f"AIP {label}"
         heading = " ".join(match.group("heading").split()).strip(" .:-")
         title = f"{citation} {heading}".strip()[:160] if heading else citation
-        sections.append(
+        raw.append(
             {
                 "regulation_id": citation,
                 "citation": citation,
@@ -240,7 +246,19 @@ def _split_aip_sections(text: str) -> list[dict]:
                 "text": section_text,
             }
         )
-    return sections
+
+    # Deduplicate by citation: keep the section with the most content (real section > TOC pointer)
+    best: dict[str, dict] = {}
+    order: list[str] = []
+    for section in raw:
+        citation = section["citation"]
+        if citation not in best:
+            best[citation] = section
+            order.append(citation)
+        elif len(section["text"]) > len(best[citation]["text"]):
+            best[citation] = section
+
+    return [best[c] for c in order]
 
 
 def _infer_legislation_prefix(text: str, regulation_type: str) -> str:
@@ -358,7 +376,7 @@ def _extract_single_doc_identifier(text: str, prefix: str) -> str:
     (e.g. 'CAO 4' could come from any CAO).  This helper extracts the qualifier from the
     document header so citations can be formed as 'CAO 48.1.4'.
     """
-    if prefix not in {"CAO"}:
+    if prefix != "CAO":
         return ""
     # Look for "CAO 48.1" or "Civil Aviation Order 48.1" near the top of the document.
     window = text[:4000]
