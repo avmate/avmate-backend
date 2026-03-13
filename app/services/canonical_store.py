@@ -120,6 +120,21 @@ class CanonicalStore:
             by_id = {row.id: self._row_to_dict(row) for row in rows}
         return [by_id[section_id] for section_id in section_ids if section_id in by_id]
 
+    def get_sections_by_citation_prefix(self, prefix: str, *, limit: int = 20) -> list[dict]:
+        """Return sections whose citation starts with `prefix` (case-insensitive), ordered by citation.
+
+        e.g. prefix='AIP ENR 1.5 6.2' → returns 'AIP ENR 1.5 6.2', 'AIP ENR 1.5 6.2.1', etc.
+        """
+        pattern = f"{prefix.lower()}%"
+        with session_scope() as session:
+            rows = session.scalars(
+                select(RegulationSection)
+                .where(func.lower(RegulationSection.citation).like(pattern))
+                .order_by(RegulationSection.citation)
+                .limit(limit)
+            ).all()
+        return [self._row_to_dict(row) for row in rows]
+
     def search_sections_by_terms(
         self,
         terms: list[str],
