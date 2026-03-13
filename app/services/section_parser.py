@@ -350,6 +350,28 @@ def _dedupe_legislation_sections(sections: list[dict]) -> list[dict]:
     return [best_by_citation[citation][1] for citation in order if citation in best_by_citation]
 
 
+def _extract_single_doc_identifier(text: str, prefix: str) -> str:
+    """Return the document-level number for a single-document regulation (e.g. '48.1' for CAO 48.1).
+
+    Some regulations (like individual CAOs) are a single document whose internal sections are
+    numbered starting from 1.  Without a document-level qualifier the citations become ambiguous
+    (e.g. 'CAO 4' could come from any CAO).  This helper extracts the qualifier from the
+    document header so citations can be formed as 'CAO 48.1.4'.
+    """
+    if prefix not in {"CAO"}:
+        return ""
+    # Look for "CAO 48.1" or "Civil Aviation Order 48.1" near the top of the document.
+    window = text[:4000]
+    for pattern in (
+        rf"\b{re.escape(prefix)}\s+(\d+(?:\.\d+)+)\b",
+        r"\bCivil Aviation Order\s+(\d+(?:\.\d+)+)\b",
+    ):
+        m = re.search(pattern, window, re.IGNORECASE)
+        if m:
+            return m.group(1)
+    return ""
+
+
 def _split_legislation_sections(text: str, regulation_type: str) -> list[dict]:
     prefix = _infer_legislation_prefix(text, regulation_type)
     if not prefix:
@@ -358,6 +380,10 @@ def _split_legislation_sections(text: str, regulation_type: str) -> list[dict]:
     matches = list(LEGISLATION_HEADING_PATTERN.finditer(text))
     if len(matches) < 3:
         return []
+
+    # For single-document CAOs, prepend the document number (e.g. "48.1") so that
+    # "CAO 4" becomes "CAO 48.1.4" — unambiguous and searchable.
+    doc_number = _extract_single_doc_identifier(text, prefix)
 
     sections: list[dict] = []
     for index, match in enumerate(matches):
@@ -374,7 +400,12 @@ def _split_legislation_sections(text: str, regulation_type: str) -> list[dict]:
         if _looks_like_toc_block(section_text):
             continue
 
-        citation = f"{prefix} {label}"
+        # Build citation: if doc_number is known and label is a short relative number
+        # (not already containing the doc_number), prepend it.
+        if doc_number and not label.startswith(doc_number) and re.match(r"^\d{1,3}(?:\.\d{1,3}){0,3}$", label):
+            citation = f"{prefix} {doc_number}.{label}"
+        else:
+            citation = f"{prefix} {label}"
         title = f"{citation} {heading}".strip()[:160]
         sections.append(
             {

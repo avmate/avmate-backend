@@ -262,6 +262,8 @@ class SearchService:
             or bool(query_profile.get("speed_limit_intent"))
             or bool(query_profile.get("passenger_recency_intent"))
             or bool(query_profile.get("fuel_requirement_intent"))
+            or bool(query_profile.get("cao_intent"))
+            or bool(query_profile.get("fatigue_hours_intent"))
         )
         if should_try_lexical_fallback:
             lexical_top_k = max(top_k, 12) if query_profile.get("qnh_intent") else top_k
@@ -345,6 +347,8 @@ class SearchService:
             references = self._prioritize_passenger_recency_references(references, top_k)
         if query_profile.get("fuel_requirement_intent"):
             references = self._prioritize_fuel_requirement_references(references, query_profile, top_k)
+        if query_profile.get("cao_intent") or query_profile.get("fatigue_hours_intent"):
+            references = self._prioritize_cao_references(references, query_profile, top_k)
         if query_profile.get("heading_rollup_intent"):
             references = self._expand_heading_subsection_references(references, query_profile, top_k)
         if explicit_page_hints:
@@ -370,6 +374,8 @@ class SearchService:
             or query_profile.get("cpl_intent")
             or query_profile.get("circling_procedure_intent")
             or query_profile.get("speed_limit_intent")
+            or query_profile.get("cao_intent")
+            or query_profile.get("fatigue_hours_intent")
         ):
             backup_refs = self._intent_seed_references(query_profile, top_k)
             references = self._drop_malformed_citations(backup_refs, limit=top_k)
@@ -772,6 +778,29 @@ class SearchService:
         strict_single_reference = bool(category_match and circling_query and numeric_intent)
         if weather_minima_intent:
             strict_single_reference = True
+
+        # CAO intent: explicit "cao" in query → route to CAO regulation family.
+        cao_match = re.search(r"\bcao\s+(\d+(?:\.\d+)*)\b", query_lower)
+        cao_intent = bool(re.search(r"\bcao\b", query_lower))
+        cao_doc_number = cao_match.group(1) if cao_match else ""
+        # Fatigue / flying-hours intent: CAO 48 family questions
+        fatigue_hours_intent = (
+            cao_intent
+            and bool(re.search(r"\b48(?:\.1)?\b", query_lower))
+            and any(
+                token in query_lower
+                for token in ("hours", "flying", "fatigue", "maximum", "limit", "duty", "rest", "flight time")
+            )
+        )
+        if cao_intent:
+            terms.extend(["cao", "order", "civil aviation order"])
+            if cao_doc_number:
+                terms.append(cao_doc_number)
+            if fatigue_hours_intent:
+                terms.extend(["flying hours", "fatigue", "maximum", "duty", "rest", "flight crew", "48.1"])
+                phrases.extend(["flying hours", "maximum flying hours", "flight duty period", "rest period"])
+            required_patterns.append(re.compile(r"\bcao\b", re.IGNORECASE))
+
         aip_preferred_intent = bool(
             weather_minima_intent
             or (circling_query and has_measure)
@@ -782,6 +811,10 @@ class SearchService:
             or speed_limit_intent
             or ("aip" in query_lower)
         )
+        # Never prefer AIP when the user is explicitly asking about a CAO document.
+        if cao_intent:
+            aip_preferred_intent = False
+
         return {
             "query_lower": query_lower,
             "terms": list(dict.fromkeys(terms)),
@@ -805,6 +838,9 @@ class SearchService:
             "explicit_subsection_labels": explicit_subsection_labels,
             "explicit_page_hints": explicit_page_hints,
             "heading_rollup_intent": heading_rollup_intent,
+            "cao_intent": cao_intent,
+            "cao_doc_number": cao_doc_number,
+            "fatigue_hours_intent": fatigue_hours_intent,
         }
 
     def _combine_score(
@@ -838,6 +874,8 @@ class SearchService:
         fixed_wing_hint = bool(query_profile.get("fixed_wing_hint"))
         explicit_subsection_labels = query_profile.get("explicit_subsection_labels", [])
         explicit_page_hints = query_profile.get("explicit_page_hints", [])
+        cao_intent = bool(query_profile.get("cao_intent"))
+        cao_doc_number = str(query_profile.get("cao_doc_number") or "")
 
         citation_lower = citation.lower()
         document_lower = document.lower()
@@ -946,6 +984,9 @@ class SearchService:
                 passes_gate = False
             if aip_preferred_intent and not is_aip_result and semantic_score < 0.92:
                 passes_gate = False
+            # CAO intent: block non-CAO results unless they score extremely high semantically.
+            if cao_intent and str(regulation_type or "").upper() != "CAO" and semantic_score < 0.93:
+                passes_gate = False
             if not precise_citation and semantic_score < 0.99:
                 passes_gate = False
 
@@ -1000,6 +1041,15 @@ class SearchService:
                 score -= 0.34
             if fixed_wing_hint and "rotorcraft" in document_lower:
                 score -= 0.4
+        if cao_intent:
+            is_cao_result = str(regulation_type or "").upper() == "CAO"
+            if is_cao_result:
+                score += 0.24
+                # Extra boost when the doc number appears in citation (e.g. "CAO 48.1.4")
+                if cao_doc_number and cao_doc_number in citation_lower:
+                    score += 0.12
+            else:
+                score -= 0.35
         if explicit_subsection_labels:
             score += 0.24 if explicit_subsection_match else -0.22
         if explicit_page_hints:
@@ -1058,7 +1108,12 @@ class SearchService:
         if not terms:
             return []
 
-        regulation_hint = "AIP" if query_profile.get("aip_preferred_intent") else None
+        if query_profile.get("cao_intent"):
+            regulation_hint = "CAO"
+        elif query_profile.get("aip_preferred_intent"):
+            regulation_hint = "AIP"
+        else:
+            regulation_hint = None
         query_terms = [term for term in terms if term not in {"aircraft", "pilot", "flight", "category", "cat"}]
         if not query_terms:
             query_terms = terms
@@ -1253,6 +1308,8 @@ class SearchService:
         speed_limit_intent = bool(query_profile.get("speed_limit_intent"))
         passenger_recency_intent = bool(query_profile.get("passenger_recency_intent"))
         fuel_requirement_intent = bool(query_profile.get("fuel_requirement_intent"))
+        fatigue_hours_intent = bool(query_profile.get("fatigue_hours_intent"))
+        cao_intent = bool(query_profile.get("cao_intent"))
         if not (
             missed_approach_intent
             or raim_intent
@@ -1261,6 +1318,8 @@ class SearchService:
             or speed_limit_intent
             or passenger_recency_intent
             or fuel_requirement_intent
+            or fatigue_hours_intent
+            or cao_intent
         ):
             return []
 
@@ -1371,6 +1430,26 @@ class SearchService:
                 ]
             )
             regulation_hints.extend(["AIP", "CASR", "CAR", None])
+        if fatigue_hours_intent:
+            seed_terms.extend(
+                [
+                    "flying hours",
+                    "maximum",
+                    "fatigue",
+                    "duty",
+                    "rest",
+                    "flight crew",
+                    "flight duty",
+                    "rest period",
+                    "48.1",
+                    "appendix",
+                    "table",
+                ]
+            )
+            regulation_hints.extend(["CAO", None])
+        elif cao_intent:
+            # Generic CAO routing when no specific fatigue sub-intent was detected.
+            regulation_hints.extend(["CAO", None])
 
         seed_terms = list(dict.fromkeys(term for term in seed_terms if len(term.strip()) >= 3))
         if not seed_terms:
@@ -1490,17 +1569,29 @@ class SearchService:
                     continue
 
                 raw_citation = " ".join((str(section.get("citation", "") or "")).split())
-                if raw_citation.lower() != requested:
+                raw_citation_lower = raw_citation.lower()
+                # Accept exact match OR prefix match for document-level citations.
+                # e.g. requested="cao 48.1" matches raw_citation="cao 48.1.4" because
+                # the user asked about the whole document, not a specific subsection.
+                is_exact = raw_citation_lower == requested
+                is_doc_prefix = (
+                    not requested.startswith("aip ")
+                    and raw_citation_lower.startswith(requested)
+                    and len(raw_citation_lower) > len(requested)
+                    and raw_citation_lower[len(requested)] in (".", " ")
+                )
+                if not is_exact and not is_doc_prefix:
                     continue
 
                 regulation_type = str(section.get("regulation_type", "UNKNOWN") or "UNKNOWN")
                 if not self._is_precise_source_citation(raw_citation, regulation_type):
                     continue
 
+                seed_score = 0.92 if is_exact else 0.85
                 reference = self._build_reference_from_section(
                     section,
                     query_profile,
-                    score=0.92,
+                    score=seed_score,
                 )
                 if reference is None:
                     continue
@@ -1753,11 +1844,30 @@ class SearchService:
         references = self._drop_malformed_citations(references, limit=narrowed_limit)
         return references[:narrowed_limit]
 
+    def _is_cao_fatigue_query(self, query_lower: str) -> bool:
+        return bool(
+            re.search(r"\bcao\b", query_lower)
+            and re.search(r"\b48(?:\.1)?\b", query_lower)
+            and any(
+                token in query_lower
+                for token in ("hours", "flying", "fatigue", "maximum", "limit", "duty", "rest", "flight time")
+            )
+        )
+
     def _build_answer(self, query: str, top_reference: ReferenceItem, references: list[ReferenceItem]) -> str:
         flattened = " ".join(top_reference.text.split())
         query_lower = query.lower()
         citations = {item.citation for item in references}
         category = self._extract_aircraft_category(query)
+
+        if self._is_cao_fatigue_query(query_lower):
+            sentence = self._extract_operational_sentence(flattened)
+            return (
+                f"{top_reference.citation}: CAO 48.1 limits maximum flying hours for flight crew. "
+                f"{sentence} "
+                "Refer to the applicable appendix table for the specific limit relevant to your operation type."
+            )
+
         if self._query_targets_circling_minima(query) and category:
             circling = self._extract_circling_radius_data(flattened, category)
             radius_value = circling.get("radius_nm")
@@ -1838,6 +1948,13 @@ class SearchService:
             label = self._citation_subsection_label(item.citation)
             if label and label not in subsection_map:
                 subsection_map[label] = item
+
+        if self._is_cao_fatigue_query(query_lower):
+            return (
+                f"In plain English: CAO 48.1 sets the maximum number of flying hours a flight crew member may accumulate "
+                "within set periods (day, week, 28 days, and year). The actual limits depend on the operation type and "
+                "are specified in the appendix tables. You must not exceed these limits regardless of other rostering arrangements."
+            )
 
         if "alternate" in query_lower and "weather" in query_lower and any(label.startswith("6.2") for label in subsection_map):
             parts: list[str] = []
@@ -1935,6 +2052,15 @@ class SearchService:
             label = self._citation_subsection_label(item.citation)
             if label and label not in subsection_map:
                 subsection_map[label] = item
+
+        if self._is_cao_fatigue_query(query_lower):
+            return (
+                "Example: A flight crew member has already flown 98 hours in the previous 28 days. "
+                "Before accepting the next rostered duty, they check the applicable CAO 48.1 appendix table "
+                "for the maximum 28-day flying hours permitted for their operation type. "
+                "If the additional duty would breach the limit, the crew member must not accept it "
+                "regardless of roster instructions."
+            )
 
         if "alternate" in query_lower and "weather" in query_lower and any(label.startswith("6.2") for label in subsection_map):
             return (
@@ -2894,6 +3020,66 @@ class SearchService:
                 break
         return references
 
+    def _prioritize_cao_references(
+        self,
+        references: list[ReferenceItem],
+        query_profile: dict,
+        top_k: int,
+    ) -> list[ReferenceItem]:
+        """Promote CAO sections to the front and suppress non-CAO results.
+
+        When the user explicitly references a CAO document (e.g. "CAO 48.1"),
+        only CAO results should surface.  If no CAO results are present yet,
+        the method seeds from the canonical store before giving up.
+        """
+        if not references and not self._canonical_store:
+            return references
+
+        cao_refs = [r for r in references if r.regulation_type.upper() == "CAO"]
+        other_refs = [r for r in references if r.regulation_type.upper() != "CAO"]
+
+        if not cao_refs and self._canonical_store:
+            # Try a direct canonical-store seed for CAO sections.
+            seed_terms = [t for t in query_profile.get("terms", []) if len(t) >= 3]
+            if not seed_terms:
+                return references[:top_k]
+            seed_sections = self._canonical_store.search_sections_by_terms(
+                seed_terms, limit=3000, regulation_type="CAO"
+            )
+            cao_doc_number = str(query_profile.get("cao_doc_number") or "")
+            for section in seed_sections:
+                raw_citation = str(section.get("citation", "") or "")
+                regulation_type = str(section.get("regulation_type", "UNKNOWN") or "UNKNOWN")
+                if not self._is_precise_source_citation(raw_citation, regulation_type):
+                    continue
+                # When a specific doc number is requested (e.g. "48.1"), require the
+                # citation to contain it to avoid returning unrelated CAO sections.
+                if cao_doc_number and cao_doc_number not in raw_citation.lower():
+                    continue
+                ref = self._build_reference_from_section(section, query_profile, score=0.72)
+                if ref and self._is_precise_citation(ref.citation, ref.regulation_type):
+                    cao_refs.append(ref)
+            if not cao_refs:
+                return references[:top_k]
+
+        # Score CAO refs by lexical relevance to surface the most operative sections.
+        terms = query_profile.get("terms", [])
+        scored: list[tuple[float, ReferenceItem]] = []
+        for ref in cao_refs:
+            text_lower = f"{ref.citation} {ref.title} {ref.text}".lower()
+            lexical_hits = sum(1 for t in terms if t in text_lower)
+            score = float(ref.score) + lexical_hits * 0.04
+            # Penalise TOC-heavy content.
+            score -= self._table_of_contents_penalty(ref.text)
+            scored.append((score, ref))
+        cao_refs = [r for _, r in sorted(scored, key=lambda p: p[0], reverse=True)]
+
+        # Suppress non-CAO results — do not mix them into the response.
+        _ = other_refs  # intentionally discarded
+        return self._dedupe_references(
+            [(r.score, r) for r in cao_refs], max(top_k * 2, top_k)
+        )[:top_k]
+
     def _filter_final_references(
         self,
         references: list[ReferenceItem],
@@ -2940,6 +3126,9 @@ class SearchService:
             return False
 
         if query_profile.get("aip_preferred_intent") and item.regulation_type.upper() != "AIP":
+            return False
+
+        if query_profile.get("cao_intent") and item.regulation_type.upper() != "CAO":
             return False
 
         if qnh_intent and "qnh" not in text:
