@@ -237,9 +237,85 @@ Additional notes unrelated to special alternate minima.
         )
         self.assertTrue(profile["fuel_requirement_intent"])
 
+    def test_build_query_profile_sets_raim_intent(self) -> None:
+        profile = self.service._build_query_profile(
+            "What is RAIM and when must it be checked for an IFR flight?"
+        )
+        self.assertTrue(profile["raim_intent"])
+        self.assertTrue(profile["aip_preferred_intent"])
+
+    def test_build_query_profile_sets_circling_procedure_intent(self) -> None:
+        profile = self.service._build_query_profile(
+            "Explain the Circle-to-Land procedure and its limitations."
+        )
+        self.assertTrue(profile["circling_procedure_intent"])
+        self.assertTrue(profile["aip_preferred_intent"])
+
     def test_has_speed_limit_evidence_handles_compact_tokens(self) -> None:
         text = "Aircraft operating below 10,000FT may be limited to 250KT IAS in the applicable airspace."
         self.assertTrue(self.service._has_speed_limit_evidence(text))
+
+    def test_select_best_aip_subsection_prefers_raim_block(self) -> None:
+        profile = self.service._build_query_profile(
+            "What is RAIM and when must it be checked for an IFR flight?"
+        )
+        sample_text = """
+4.8 GNSS - Operations Without RAIM
+4.8.1 ATS services are predicated on accurate aircraft navigation and position fixing. If GNSS integrity is not assured due to loss of RAIM or RAIM ALERT, the following procedures must be adopted.
+6.3 GNSS Reporting Requirements and Procedures
+6.3.3 When responding to ATC requests for distance information, pilots should provide GNSS distance unless RAIM is currently not available.
+6.3.5 If a GNSS distance is provided and RAIM is not currently available, the report should be suffixed NEGATIVE RAIM.
+        """.strip()
+
+        label, block = self.service._select_best_aip_subsection(sample_text, "AIP 4.8", profile)
+        self.assertEqual(label, "4.8.1")
+        self.assertIn("RAIM", block)
+
+    def test_prioritize_circling_procedure_references_prefers_aip_circling_rules(self) -> None:
+        references = [
+            _reference(
+                "CASR 61.235",
+                regulation_type="CASR",
+                text="CASR Part 61 training administration text.",
+                score=0.94,
+            ),
+            _reference(
+                "AIP ENR 1.5 - 3 subsection 1.6.2",
+                text="1.6.2 A circling approach is an extension of an instrument approach to the published circling approach minima with the intent to visually manoeuvre the aircraft to align with the runway for a landing.",
+                score=0.72,
+            ),
+            _reference(
+                "AIP ENR 1.5 - 5 subsection 1.6.7.2",
+                text="1.6.7.2 During visual circling, descent below the promulgated circling approach minima should not be made until required visual reference is established and the landing threshold is in sight.",
+                score=0.7,
+            ),
+        ]
+
+        ranked = self.service._prioritize_circling_procedure_references(references, top_k=3)
+        self.assertEqual(ranked[0].citation, "AIP ENR 1.5 - 3 subsection 1.6.2")
+
+    def test_prioritize_raim_references_prefers_aip_raim_rules(self) -> None:
+        references = [
+            _reference(
+                "CASR 21.5.2",
+                regulation_type="CASR",
+                text="CASR handbook administration text.",
+                score=0.95,
+            ),
+            _reference(
+                "AIP ENR 1.1 - 28 subsection 4.8.1",
+                text="4.8.1 If GNSS integrity is not assured due to loss of RAIM or RAIM ALERT, the following procedures must be adopted.",
+                score=0.73,
+            ),
+            _reference(
+                "AIP ENR 1.1 - 42 subsection 6.3.3",
+                text="6.3.3 When responding to ATC requests for distance information, pilots should provide GNSS distance unless RAIM is currently not available.",
+                score=0.72,
+            ),
+        ]
+
+        ranked = self.service._prioritize_raim_references(references, top_k=3)
+        self.assertEqual(ranked[0].citation, "AIP ENR 1.1 - 28 subsection 4.8.1")
 
     def test_expand_heading_subsection_references_includes_parent_and_children(self) -> None:
         service = SearchService(

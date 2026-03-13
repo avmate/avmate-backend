@@ -56,8 +56,13 @@ PART_HINT_PATTERN = re.compile(r"\bpart\s+(\d+)\b", re.IGNORECASE)
 OUT_OF_SCOPE_HINT_PATTERNS = (
     re.compile(r"\b(?:hr|behavioral|operational|general practice)\b", re.IGNORECASE),
     re.compile(r"\b(?:casa workbook|syllabus|guide|advisory circular)\b", re.IGNORECASE),
+    re.compile(r"\b(?:aerodynamics)\b", re.IGNORECASE),
     re.compile(r"\b(?:bo?m|meteorology|human factors)\b", re.IGNORECASE),
     re.compile(r"\b(?:airservices|naips|atsb|transport safety investigation act)\b", re.IGNORECASE),
+)
+OUT_OF_SCOPE_QUERY_PATTERNS = (
+    re.compile(r"\bp-?factor\b", re.IGNORECASE),
+    re.compile(r"\b(?:scuba|decompression|decompression diving|scuba diving)\b", re.IGNORECASE),
 )
 
 
@@ -250,13 +255,16 @@ def _hint_matches_citations(hint: str, citations: list[str]) -> bool:
     return False
 
 
-def _is_out_of_scope_case(reference_hint: str, category: str) -> bool:
+def _is_out_of_scope_case(reference_hint: str, category: str, question: str = "") -> bool:
     hint = normalize_spaces(reference_hint).lower()
     cat = normalize_spaces(category).lower()
-    combined = f"{hint} {cat}".strip()
+    query = normalize_spaces(question).lower()
+    combined = f"{hint} {cat} {query}".strip()
     if not combined:
         return False
     if any(pattern.search(combined) for pattern in OUT_OF_SCOPE_HINT_PATTERNS):
+        return True
+    if any(pattern.search(query) for pattern in OUT_OF_SCOPE_QUERY_PATTERNS):
         return True
 
     for family, aliases in CATALOG_FAMILY_ALIASES.items():
@@ -293,7 +301,7 @@ def load_query_bank_cases(paths_csv: str) -> list[QueryCase]:
                 regulation_type = ""
                 if expected_citation:
                     regulation_type = expected_citation.split()[0].upper()
-                out_of_scope = _is_out_of_scope_case(hint, category)
+                out_of_scope = _is_out_of_scope_case(hint, category, question)
                 cases.append(
                     QueryCase(
                         query=question,
@@ -507,14 +515,17 @@ def main() -> int:
     print(f"Minimum per manual: {MIN_QUERIES_PER_MANUAL}")
     print(f"Query banks: {QUERY_BANK_PATHS}")
 
-    sampled_rows = load_random_sections(QUERY_COUNT)
-    if not sampled_rows:
-        print("No usable indexed sections found for stress generation.")
-        return 1
-    manuals = sorted({normalize_spaces(row.source_file) or "unknown_source" for row in sampled_rows})
-    print(f"Manuals covered in sample set: {len(manuals)}")
     bank_cases = load_query_bank_cases(QUERY_BANK_PATHS)
+    sampled_rows = load_random_sections(QUERY_COUNT)
+    manuals = sorted({normalize_spaces(row.source_file) or "unknown_source" for row in sampled_rows})
+    if sampled_rows:
+        print(f"Manuals covered in sample set: {len(manuals)}")
+    else:
+        print("No usable indexed sections found locally; running bank-only evaluation.")
     print(f"Loaded bank queries: {len(bank_cases)}")
+    if not sampled_rows and not bank_cases:
+        print("No usable indexed sections or bank queries found for stress generation.")
+        return 1
 
     all_rounds: list[dict] = []
     for round_number in range(1, MAX_ROUNDS + 1):
@@ -523,7 +534,7 @@ def main() -> int:
             case = build_query_case(row)
             if case:
                 random_cases.append(case)
-        if not random_cases:
+        if not random_cases and not bank_cases:
             print("No query cases generated.")
             return 1
         cases = [*random_cases, *bank_cases]

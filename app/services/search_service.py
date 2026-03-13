@@ -76,6 +76,17 @@ CIRCLING_ROW_PATTERN = re.compile(
 )
 QNH_PRIORITY_SUBSECTIONS = ("1.4.1", "1.4", "5.3", "5.3.1", "5.3.2", "5.3.3", "5.3.4")
 WEATHER_MINIMA_PRIORITY_SUBSECTIONS = ("6.2", "6.2.1", "6.2.2", "6.2.3", "6.2.4")
+RAIM_PRIORITY_SUBSECTIONS = ("4.8.1", "6.3.3", "6.3.4", "6.3.5")
+CIRCLING_PROCEDURE_PRIORITY_SUBSECTIONS = (
+    "1.6",
+    "1.6.2",
+    "1.6.3",
+    "1.6.7.2",
+    "1.6.7.3",
+    "1.6.7.4",
+    "1.6.7.5",
+    "1.9.1",
+)
 HEADING_ROLLUP_HINTS = (
     "criteria",
     "criterion",
@@ -243,7 +254,9 @@ class SearchService:
             or bool(requested_citations)
             or bool(query_profile.get("weather_minima_intent"))
             or bool(query_profile.get("qnh_intent"))
+            or bool(query_profile.get("raim_intent"))
             or bool(query_profile.get("cpl_intent"))
+            or bool(query_profile.get("circling_procedure_intent"))
             or bool(query_profile.get("speed_limit_intent"))
             or bool(query_profile.get("passenger_recency_intent"))
             or bool(query_profile.get("fuel_requirement_intent"))
@@ -270,7 +283,9 @@ class SearchService:
                     elif query_profile.get("qnh_intent"):
                         references = self._merge_references(references, lexical_fallback_refs, limit=max(top_k * 2, 10))
                     elif (
-                        query_profile.get("cpl_intent")
+                        query_profile.get("raim_intent")
+                        or query_profile.get("circling_procedure_intent")
+                        or query_profile.get("cpl_intent")
                         or query_profile.get("speed_limit_intent")
                         or query_profile.get("passenger_recency_intent")
                         or query_profile.get("fuel_requirement_intent")
@@ -313,8 +328,12 @@ class SearchService:
         if query_profile.get("qnh_intent"):
             references = self._prioritize_qnh_references(references, query_profile, top_k)
             references = self._ensure_parent_subsection_reference(references, parent_label="5.3", limit=top_k)
+        if query_profile.get("raim_intent"):
+            references = self._prioritize_raim_references(references, top_k)
         if query_profile.get("cpl_intent"):
             references = self._prioritize_cpl_references(references, top_k)
+        if query_profile.get("circling_procedure_intent"):
+            references = self._prioritize_circling_procedure_references(references, top_k)
         if query_profile.get("speed_limit_intent"):
             references = self._prioritize_speed_limit_references(references, top_k)
         if query_profile.get("passenger_recency_intent"):
@@ -340,7 +359,12 @@ class SearchService:
             )
             references = self._dedupe_by_subsection_label(references, limit=top_k)
         references = self._drop_malformed_citations(references, limit=top_k)
-        if not references and (query_profile.get("cpl_intent") or query_profile.get("speed_limit_intent")):
+        if not references and (
+            query_profile.get("raim_intent")
+            or query_profile.get("cpl_intent")
+            or query_profile.get("circling_procedure_intent")
+            or query_profile.get("speed_limit_intent")
+        ):
             backup_refs = self._intent_seed_references(query_profile, top_k)
             references = self._drop_malformed_citations(backup_refs, limit=top_k)
         if not references and explicit_subsection_labels and explicit_page_hints:
@@ -466,6 +490,27 @@ class SearchService:
                 if item.citation == "CASR 91.455":
                     return self._prefer_operational_reference_text(item, query_profile)
             return self._prefer_operational_reference_text(lead, query_profile)
+        if query_profile.get("raim_intent"):
+            for citation in (
+                "AIP ENR 1.1 - 28 subsection 4.8.1",
+                "AIP ENR 1.1 - 42 subsection 6.3.3",
+                "AIP ENR 1.1 - 42 subsection 6.3.4",
+                "AIP ENR 1.1 - 43 subsection 6.3.5",
+            ):
+                for item in references:
+                    if item.citation == citation:
+                        return item
+            return lead
+        if query_profile.get("circling_procedure_intent"):
+            for citation in (
+                "AIP ENR 1.5 - 3 subsection 1.6.2",
+                "AIP ENR 1.5 - 5 subsection 1.6.7.2",
+                "AIP ENR 1.5 - 10 subsection 1.9.1",
+            ):
+                for item in references:
+                    if item.citation == citation:
+                        return item
+            return lead
         if not query_profile.get("heading_rollup_intent"):
             return self._prefer_operational_reference_text(lead, query_profile)
 
@@ -515,6 +560,26 @@ class SearchService:
             or ("commercial pilot licence" in query_lower)
             or ("commercial pilot license" in query_lower)
         )
+        circling_query = self._is_circling_query(query_lower)
+        circling_procedure_intent = circling_query and any(
+            token in query_lower
+            for token in (
+                "procedure",
+                "procedures",
+                "limitation",
+                "limitations",
+                "restriction",
+                "restrictions",
+                "align",
+                "visual",
+                "runway",
+                "circle-to-land",
+                "circle to land",
+            )
+        )
+        raim_intent = "raim" in query_lower or (
+            "gnss" in query_lower and any(token in query_lower for token in ("integrity", "ifr", "check", "checked"))
+        )
         speed_limit_intent = (
             ("speed" in query_lower or "knots" in query_lower or "kts" in query_lower)
             and ("10000" in query_lower or "10,000" in query_lower or "10 000" in query_lower)
@@ -534,6 +599,15 @@ class SearchService:
         if cpl_intent:
             terms.extend(["commercial", "pilot", "licence", "license", "cpl", "aeronautical", "experience", "hours", "part", "61"])
             phrases.extend(["commercial pilot licence", "aeronautical experience"])
+        if circling_query:
+            terms.extend(["circling", "circle-to-land", "circle", "visual", "runway", "approach", "minima"])
+            phrases.extend(["circling approach", "visual circling", "circling area"])
+        if circling_procedure_intent:
+            terms.extend(["procedure", "limitations", "restriction", "align", "landing", "runway environment", "no circling"])
+            phrases.extend(["runway environment", "no circling", "visual manoeuvre"])
+        if raim_intent:
+            terms.extend(["raim", "gnss", "integrity", "alert", "negative raim", "ats"])
+            phrases.extend(["loss of raim", "raim alert", "gnss integrity"])
         if speed_limit_intent:
             terms.extend(["speed", "limit", "below", "10000", "10,000", "10,000ft", "knots", "kts", "kt", "ias", "250", "250kt"])
             phrases.extend(["below 10000 feet", "below 10000 ft", "10,000ft", "250 knots", "250kt"])
@@ -549,13 +623,13 @@ class SearchService:
         if category_match:
             cat = category_match.group(1)
             required_patterns.append(re.compile(rf"\bcat(?:egory)?\s*{cat}\b", re.IGNORECASE))
-        if "circling" in query_lower:
+        if circling_query:
             required_patterns.append(re.compile(r"\bcircling\b", re.IGNORECASE))
         has_measure = any(term in query_lower for term in ("radius", "radii", "minima", "minimum"))
         minima_measure_intent = (
             ("radius" in query_lower)
             or ("radii" in query_lower)
-            or ("circling" in query_lower and ("minima" in query_lower or "minimum" in query_lower))
+            or (circling_query and ("minima" in query_lower or "minimum" in query_lower))
             or (
                 ("alternate" in query_lower)
                 and ("weather" in query_lower)
@@ -567,6 +641,10 @@ class SearchService:
         qnh_intent = "qnh" in query_lower
         if qnh_intent:
             required_patterns.append(re.compile(r"\bqnh\b", re.IGNORECASE))
+        if circling_procedure_intent:
+            required_patterns.append(re.compile(r"\b(?:approach|visual|runway|area|manoeuvre)\b", re.IGNORECASE))
+        if raim_intent:
+            required_patterns.append(re.compile(r"\b(?:raim|gnss)\b", re.IGNORECASE))
         if speed_limit_intent:
             required_patterns.append(ALTITUDE_10000_PATTERN)
             required_patterns.append(re.compile(r"(?:\b250\b|250(?:kt|kts|knots|ias)\b)", re.IGNORECASE))
@@ -621,6 +699,13 @@ class SearchService:
                 "atc",
                 "aais",
                 "watir",
+                "raim",
+                "gnss",
+                "integrity",
+                "alert",
+                "visual",
+                "runway",
+                "approach",
                 "speed",
                 "kts",
                 "knots",
@@ -649,12 +734,14 @@ class SearchService:
         heading_rollup_intent = bool(explicit_subsection_labels) or any(
             hint in query_lower for hint in HEADING_ROLLUP_HINTS
         )
-        strict_single_reference = bool(category_match and "circling" in query_lower and numeric_intent)
+        strict_single_reference = bool(category_match and circling_query and numeric_intent)
         if weather_minima_intent:
             strict_single_reference = True
         aip_preferred_intent = bool(
             weather_minima_intent
-            or ("circling" in query_lower and has_measure)
+            or (circling_query and has_measure)
+            or circling_procedure_intent
+            or raim_intent
             or qnh_intent
             or speed_limit_intent
             or ("aip" in query_lower)
@@ -671,7 +758,9 @@ class SearchService:
             "special_weather_minima_intent": special_weather_minima_intent,
             "aip_preferred_intent": aip_preferred_intent,
             "qnh_intent": qnh_intent,
+            "raim_intent": raim_intent,
             "cpl_intent": cpl_intent,
+            "circling_procedure_intent": circling_procedure_intent,
             "speed_limit_intent": speed_limit_intent,
             "passenger_recency_intent": passenger_recency_intent,
             "fuel_requirement_intent": fuel_requirement_intent,
@@ -700,9 +789,11 @@ class SearchService:
         strict_single_reference = bool(query_profile.get("strict_single_reference"))
         aip_preferred_intent = bool(query_profile.get("aip_preferred_intent"))
         qnh_intent = bool(query_profile.get("qnh_intent"))
+        raim_intent = bool(query_profile.get("raim_intent"))
         weather_minima_intent = bool(query_profile.get("weather_minima_intent"))
         special_weather_minima_intent = bool(query_profile.get("special_weather_minima_intent"))
         cpl_intent = bool(query_profile.get("cpl_intent"))
+        circling_procedure_intent = bool(query_profile.get("circling_procedure_intent"))
         speed_limit_intent = bool(query_profile.get("speed_limit_intent"))
         passenger_recency_intent = bool(query_profile.get("passenger_recency_intent"))
         fuel_requirement_intent = bool(query_profile.get("fuel_requirement_intent"))
@@ -742,6 +833,7 @@ class SearchService:
             )
         )
         qnh_evidence = bool(re.search(r"\bqnh\b", document_lower) or re.search(r"\bqnh\b", citation_lower))
+        raim_evidence = self._has_raim_evidence(document_lower)
         weather_phrase_hit = bool(re.search(r"\bspecial\s+alternate\s+weather\s+minima\b", document_lower))
         cpl_identity = bool(
             re.search(r"\b(?:commercial|cpl)\b", document_lower)
@@ -754,6 +846,7 @@ class SearchService:
         )
         cpl_experience = bool(re.search(r"\b(?:hours|experience|aeronautical)\b", document_lower))
         cpl_evidence = cpl_identity and cpl_authority and cpl_experience
+        circling_procedure_evidence = self._has_circling_procedure_evidence(document_lower)
         speed_limit_evidence = self._has_speed_limit_evidence(document_lower)
         passenger_recency_evidence = bool(
             re.search(r"\bpassenger", document_lower)
@@ -777,13 +870,19 @@ class SearchService:
                 passes_gate = False
             if qnh_intent and not qnh_evidence and semantic_score < 0.9:
                 passes_gate = False
+            if raim_intent and not raim_evidence and semantic_score < 0.88:
+                passes_gate = False
             if cpl_intent and not cpl_evidence and semantic_score < 0.9:
+                passes_gate = False
+            if circling_procedure_intent and not circling_procedure_evidence and semantic_score < 0.88:
                 passes_gate = False
             if speed_limit_intent and not speed_limit_evidence and semantic_score < 0.9:
                 passes_gate = False
             if passenger_recency_intent and not passenger_recency_evidence and semantic_score < 0.88:
                 passes_gate = False
             if fuel_requirement_intent and not fuel_requirement_evidence and semantic_score < 0.88:
+                passes_gate = False
+            if (raim_intent or circling_procedure_intent) and str(regulation_type or "").upper() != "AIP" and semantic_score < 0.97:
                 passes_gate = False
             if passenger_recency_intent and str(regulation_type or "").upper() != "CASR" and semantic_score < 0.97:
                 passes_gate = False
@@ -834,8 +933,16 @@ class SearchService:
             score -= 0.15
         if qnh_intent:
             score += 0.12 if qnh_evidence else -0.2
+        if raim_intent:
+            score += 0.22 if raim_evidence else -0.24
+            if str(regulation_type or "").upper() != "AIP":
+                score -= 0.3
         if cpl_intent:
             score += 0.2 if cpl_evidence else -0.24
+        if circling_procedure_intent:
+            score += 0.22 if circling_procedure_evidence else -0.24
+            if str(regulation_type or "").upper() != "AIP":
+                score -= 0.3
         if speed_limit_intent:
             score += 0.24 if speed_limit_evidence else -0.26
         if passenger_recency_intent:
@@ -924,7 +1031,9 @@ class SearchService:
         intent_tokens = query_profile.get("intent_tokens", [])
         numeric_intent = bool(query_profile.get("numeric_intent"))
         qnh_intent = bool(query_profile.get("qnh_intent"))
+        raim_intent = bool(query_profile.get("raim_intent"))
         cpl_intent = bool(query_profile.get("cpl_intent"))
+        circling_procedure_intent = bool(query_profile.get("circling_procedure_intent"))
         speed_limit_intent = bool(query_profile.get("speed_limit_intent"))
         passenger_recency_intent = bool(query_profile.get("passenger_recency_intent"))
         fuel_requirement_intent = bool(query_profile.get("fuel_requirement_intent"))
@@ -979,6 +1088,7 @@ class SearchService:
             toc_penalty = self._table_of_contents_penalty(canonical_text)
             numeric_evidence = bool(re.search(r"\b\d+(?:\.\d+)?\s*(?:nm|ft|m|kts|kt|hpa)\b", text_lower))
             qnh_evidence = "qnh" in text_lower or "qnh" in citation_lower
+            raim_evidence = self._has_raim_evidence(text_lower)
             cpl_evidence = bool(
                 (
                     re.search(r"\b(?:commercial|cpl)\b", text_lower)
@@ -988,6 +1098,7 @@ class SearchService:
                 and (re.search(r"\b(?:pilot|licen[cs]e)\b", text_lower) or re.search(r"\bpart\s*61\b", citation_lower))
                 and re.search(r"\b(?:hours|experience|aeronautical)\b", text_lower)
             )
+            circling_procedure_evidence = self._has_circling_procedure_evidence(text_lower)
             speed_limit_evidence = self._has_speed_limit_evidence(text_lower)
             passenger_recency_evidence = bool(
                 re.search(r"\bpassenger", text_lower)
@@ -1023,8 +1134,16 @@ class SearchService:
                     score += 0.12
                 if subsection == "1.4.1":
                     score += 0.14
+            if raim_intent:
+                score += 0.24 if raim_evidence else -0.28
+                if regulation_type.upper() != "AIP":
+                    score -= 0.34
             if cpl_intent:
                 score += 0.24 if cpl_evidence else -0.28
+            if circling_procedure_intent:
+                score += 0.24 if circling_procedure_evidence else -0.28
+                if regulation_type.upper() != "AIP":
+                    score -= 0.34
             if speed_limit_intent:
                 score += 0.28 if speed_limit_evidence else -0.3
             if passenger_recency_intent:
@@ -1076,12 +1195,16 @@ class SearchService:
         if not self._canonical_store:
             return []
 
+        raim_intent = bool(query_profile.get("raim_intent"))
         cpl_intent = bool(query_profile.get("cpl_intent"))
+        circling_procedure_intent = bool(query_profile.get("circling_procedure_intent"))
         speed_limit_intent = bool(query_profile.get("speed_limit_intent"))
         passenger_recency_intent = bool(query_profile.get("passenger_recency_intent"))
         fuel_requirement_intent = bool(query_profile.get("fuel_requirement_intent"))
         if not (
-            cpl_intent
+            raim_intent
+            or cpl_intent
+            or circling_procedure_intent
             or speed_limit_intent
             or passenger_recency_intent
             or fuel_requirement_intent
@@ -1091,6 +1214,19 @@ class SearchService:
         query_terms = [term for term in query_profile.get("terms", []) if len(term) >= 3]
         seed_terms: list[str] = list(query_terms)
         regulation_hints: list[str | None] = []
+        if raim_intent:
+            seed_terms.extend(
+                [
+                    "raim",
+                    "gnss",
+                    "integrity",
+                    "raim alert",
+                    "negative raim",
+                    "ats",
+                    "ifr",
+                ]
+            )
+            regulation_hints.extend(["AIP", None])
         if cpl_intent:
             seed_terms.extend(
                 [
@@ -1106,6 +1242,20 @@ class SearchService:
                 ]
             )
             regulation_hints.extend(["CASR", None])
+        if circling_procedure_intent:
+            seed_terms.extend(
+                [
+                    "circling",
+                    "visual circling",
+                    "circling approach",
+                    "circling area",
+                    "runway environment",
+                    "no circling",
+                    "manoeuvre",
+                    "landing",
+                ]
+            )
+            regulation_hints.extend(["AIP", None])
         if passenger_recency_intent:
             seed_terms.extend(
                 [
@@ -1362,10 +1512,32 @@ class SearchService:
             score += 0.3 if page_match else -0.26
 
         cpl_intent = bool(query_profile.get("cpl_intent"))
+        raim_intent = bool(query_profile.get("raim_intent"))
+        circling_procedure_intent = bool(query_profile.get("circling_procedure_intent"))
         speed_limit_intent = bool(query_profile.get("speed_limit_intent"))
         passenger_recency_intent = bool(query_profile.get("passenger_recency_intent"))
         fuel_requirement_intent = bool(query_profile.get("fuel_requirement_intent"))
         fixed_wing_hint = bool(query_profile.get("fixed_wing_hint"))
+        if raim_intent:
+            raim_evidence = self._has_raim_evidence(text_lower)
+            if raim_evidence:
+                score += 0.48
+            else:
+                score -= 0.4
+            if regulation_type.upper() == "AIP":
+                score += 0.18
+            if subsection in RAIM_PRIORITY_SUBSECTIONS:
+                score += 0.26
+        if circling_procedure_intent:
+            circling_procedure_evidence = self._has_circling_procedure_evidence(text_lower)
+            if circling_procedure_evidence:
+                score += 0.48
+            else:
+                score -= 0.4
+            if regulation_type.upper() == "AIP":
+                score += 0.18
+            if subsection in CIRCLING_PROCEDURE_PRIORITY_SUBSECTIONS:
+                score += 0.24
         if cpl_intent:
             cpl_identity = bool(
                 re.search(r"\b(?:commercial|cpl)\b", text_lower)
@@ -1527,6 +1699,17 @@ class SearchService:
                 "CASR 61.590 and CASR 61.610: for an aeroplane CPL, the minimum aeronautical experience is "
                 "150 hours if the applicant completed an integrated training course, or 200 hours if the applicant did not."
             )
+        if "raim" in query_lower:
+            return (
+                "AIP ENR 1.1 subsections 4.8.1, 6.3.3, 6.3.4 and 6.3.5: if RAIM or GNSS integrity is not available, "
+                "the pilot must not rely on GNSS-derived separation or reporting in the normal way, must advise ATS, "
+                "and use the published NEGATIVE RAIM reporting rule where applicable."
+            )
+        if self._query_targets_circling_procedure(query):
+            return (
+                "AIP ENR 1.5 circling subsections: a circle-to-land is a circling approach flown to published circling minima, "
+                "then visually manoeuvred to align with the landing runway while remaining within the circling area and maintaining the required visual reference."
+            )
         if "10000" in query_lower or "10,000" in query_lower or "10 000" in query_lower:
             if self._has_speed_limit_evidence(flattened):
                 return (
@@ -1607,6 +1790,11 @@ class SearchService:
                 f"Use {top_reference.citation} first. For QNH questions, only use sources explicitly approved in the cited AIP text, "
                 "then apply any related minima adjustments from linked QNH subsections."
             )
+        if "raim" in query_lower:
+            return (
+                "In plain English: if RAIM drops out, you cannot assume GNSS integrity is good enough for normal IFR use. "
+                "Advise ATS, use another navigation source if needed, and if you still give GNSS distance after recent RAIM availability, add NEGATIVE RAIM as required."
+            )
         if (
             any(token in query_lower for token in ("cpl", "commercial pilot licence", "commercial pilot license"))
             and {"CASR 61.590", "CASR 61.610"}.issubset({item.citation for item in references})
@@ -1614,6 +1802,12 @@ class SearchService:
             return (
                 "In plain English: for an aeroplane CPL, the minimum hour total depends on the training pathway. "
                 "Use 150 hours under CASR 61.590 if the applicant completed an integrated training course, or 200 hours under CASR 61.610 if the applicant did not."
+            )
+        if self._query_targets_circling_procedure(query):
+            return (
+                "In plain English: fly the instrument approach to circling minima, keep the runway environment in sight, stay within the protected circling area, "
+                "and do not descend below circling minima unless the landing threshold is in sight and obstacle clearance can still be maintained. "
+                "No Circling sectors are off limits."
             )
         if "10000" in query_lower or "10,000" in query_lower or "10 000" in query_lower:
             if self._has_speed_limit_evidence(flattened):
@@ -1667,6 +1861,12 @@ class SearchService:
                 f"Before descending to DA, the pilot confirms QNH from an approved source under {top_reference.citation}. "
                 "If only forecast QNH is available, the pilot does not treat it as valid for pressure-altitude accuracy checks and applies the appropriate minima logic from the cited QNH subsections."
             )
+        if "raim" in query_lower:
+            return (
+                "Example: an IFR pilot is cleared using GNSS guidance and then gets a RAIM alert. "
+                "The pilot advises ATS immediately, stops relying on GNSS-derived separation or distance information in the normal way, "
+                "uses another navigation source while RAIM is unavailable, and if a GNSS distance report is still provided after recent RAIM availability, adds NEGATIVE RAIM."
+            )
         if (
             any(token in query_lower for token in ("cpl", "commercial pilot licence", "commercial pilot license"))
             and {"CASR 61.590", "CASR 61.610"}.issubset({item.citation for item in references})
@@ -1675,6 +1875,12 @@ class SearchService:
                 "Example: a student applying for an aeroplane CPL checks which training pathway applies. "
                 "If the student completed an integrated course, use CASR 61.590 and plan against 150 hours. "
                 "If the student did not complete an integrated course, use CASR 61.610 and plan against 200 hours."
+            )
+        if self._query_targets_circling_procedure(query):
+            return (
+                "Example: a pilot flies an instrument approach to circling minima for the opposite runway, keeps the runway environment in sight, "
+                "remains inside the circling area, and only descends below circling minima once the threshold is in sight and a normal landing can be completed. "
+                "If the runway is lost from sight or the aircraft drifts toward a No Circling sector, the pilot abandons the manoeuvre and flies the published missed approach."
             )
         if "10000" in query_lower or "10,000" in query_lower or "10 000" in query_lower:
             if self._has_speed_limit_evidence(flattened):
@@ -2316,6 +2522,78 @@ class SearchService:
 
         return unique[:top_k]
 
+    def _prioritize_raim_references(self, references: list[ReferenceItem], top_k: int) -> list[ReferenceItem]:
+        if not references:
+            return []
+
+        scored: list[tuple[float, ReferenceItem]] = []
+        for item in references:
+            text = f"{item.citation} {item.title} {item.text}".lower()
+            subsection = self._citation_subsection_label(item.citation)
+            score = float(item.score)
+            if subsection == "4.8.1":
+                score += 2.4
+            elif subsection in {"6.3.3", "6.3.4", "6.3.5"}:
+                score += 1.3
+            elif subsection in RAIM_PRIORITY_SUBSECTIONS:
+                score += 0.6
+            if self._has_raim_evidence(text):
+                score += 0.6
+            if "negative raim" in text:
+                score += 0.2
+            if item.regulation_type.upper() != "AIP":
+                score -= 1.3
+            scored.append((score, item))
+
+        ordered = [item for _, item in sorted(scored, key=lambda pair: pair[0], reverse=True)]
+        unique: list[ReferenceItem] = []
+        seen: set[str] = set()
+        for item in ordered:
+            key = item.citation.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(item)
+            if len(unique) >= top_k:
+                break
+        return unique
+
+    def _prioritize_circling_procedure_references(self, references: list[ReferenceItem], top_k: int) -> list[ReferenceItem]:
+        if not references:
+            return []
+
+        scored: list[tuple[float, ReferenceItem]] = []
+        for item in references:
+            text = f"{item.citation} {item.title} {item.text}".lower()
+            subsection = self._citation_subsection_label(item.citation)
+            score = float(item.score)
+            if subsection == "1.6":
+                score += 2.0
+            elif subsection in {"1.6.2", "1.6.7.2", "1.6.7.3", "1.6.7.4", "1.6.7.5", "1.9.1"}:
+                score += 1.4
+            elif subsection in CIRCLING_PROCEDURE_PRIORITY_SUBSECTIONS:
+                score += 0.7
+            if self._has_circling_procedure_evidence(text):
+                score += 0.6
+            if "no circling" in text:
+                score += 0.18
+            if item.regulation_type.upper() != "AIP":
+                score -= 1.3
+            scored.append((score, item))
+
+        ordered = [item for _, item in sorted(scored, key=lambda pair: pair[0], reverse=True)]
+        unique: list[ReferenceItem] = []
+        seen: set[str] = set()
+        for item in ordered:
+            key = item.citation.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(item)
+            if len(unique) >= top_k:
+                break
+        return unique
+
     def _prioritize_passenger_recency_references(self, references: list[ReferenceItem], top_k: int) -> list[ReferenceItem]:
         if not references:
             return []
@@ -2518,6 +2796,8 @@ class SearchService:
         intent_tokens = query_profile.get("intent_tokens", [])
         terms = query_profile.get("terms", [])
         qnh_intent = bool(query_profile.get("qnh_intent"))
+        raim_intent = bool(query_profile.get("raim_intent"))
+        circling_procedure_intent = bool(query_profile.get("circling_procedure_intent"))
         passenger_recency_intent = bool(query_profile.get("passenger_recency_intent"))
         fuel_requirement_intent = bool(query_profile.get("fuel_requirement_intent"))
         fixed_wing_hint = bool(query_profile.get("fixed_wing_hint"))
@@ -2530,9 +2810,15 @@ class SearchService:
 
         if qnh_intent and "qnh" not in text:
             return False
+        if raim_intent and not self._has_raim_evidence(text):
+            return False
+        if circling_procedure_intent and not self._has_circling_procedure_evidence(text):
+            return False
         if passenger_recency_intent and ("passenger" not in text or not re.search(r"\b(?:recent|recency|currency|experience)\b", text)):
             return False
         if fuel_requirement_intent and ("fuel" not in text or not re.search(r"\b(?:requirement|requirements|reserve)\b", text)):
+            return False
+        if (raim_intent or circling_procedure_intent) and item.regulation_type.upper() != "AIP":
             return False
         if passenger_recency_intent and item.regulation_type.upper() != "CASR":
             return False
@@ -2558,15 +2844,56 @@ class SearchService:
 
     def _query_targets_circling_minima(self, query: str) -> bool:
         query_lower = query.lower()
-        has_circling = "circling" in query_lower
+        has_circling = self._is_circling_query(query_lower)
         has_measure = any(term in query_lower for term in ("radius", "radii", "minima", "minimum"))
         return has_circling and has_measure
+
+    def _query_targets_circling_procedure(self, query: str) -> bool:
+        query_lower = query.lower()
+        return self._is_circling_query(query_lower) and any(
+            token in query_lower
+            for token in (
+                "procedure",
+                "procedures",
+                "limitation",
+                "limitations",
+                "restriction",
+                "restrictions",
+                "visual",
+                "align",
+                "runway",
+                "circle-to-land",
+                "circle to land",
+            )
+        )
+
+    def _is_circling_query(self, query: str) -> bool:
+        query_lower = query.lower()
+        return bool(re.search(r"\bcircling\b", query_lower)) or bool(
+            re.search(r"\bcircle(?:[-\s]+to[-\s]+land)\b", query_lower)
+        )
 
     def _extract_aircraft_category(self, query: str) -> str:
         match = re.search(r"\bcat(?:egory)?\s*([abcd])\b", query, re.IGNORECASE)
         if not match:
             return ""
         return match.group(1).upper()
+
+    def _has_raim_evidence(self, text: str) -> bool:
+        lowered = str(text or "").lower()
+        if not lowered:
+            return False
+        return bool(re.search(r"\braim\b", lowered) and re.search(r"\b(?:gnss|integrity|alert|negative)\b", lowered))
+
+    def _has_circling_procedure_evidence(self, text: str) -> bool:
+        lowered = str(text or "").lower()
+        if not lowered:
+            return False
+        if "circling" not in lowered:
+            return False
+        return bool(
+            re.search(r"\b(?:approach|visual|runway|area|manoeuvre|landing|minima|threshold|no circling)\b", lowered)
+        )
 
     def _has_speed_limit_evidence(self, text: str) -> bool:
         lowered = str(text or "").lower()
@@ -2665,6 +2992,19 @@ class SearchService:
                         expanded = self._expand_aip_subsection_block(blocks, label)
                         return label, expanded or block
 
+        if query_profile.get("circling_procedure_intent"):
+            for label in CIRCLING_PROCEDURE_PRIORITY_SUBSECTIONS:
+                block = by_label.get(label)
+                if not block:
+                    continue
+                if self._has_circling_procedure_evidence(block.lower()):
+                    expanded = self._expand_aip_subsection_block(blocks, label)
+                    return label, expanded or block
+            for label, block in blocks:
+                if self._has_circling_procedure_evidence(block.lower()):
+                    expanded = self._expand_aip_subsection_block(blocks, label)
+                    return label, expanded or block
+
         if query_profile.get("weather_minima_intent"):
             preferred_labels = [label for label in WEATHER_MINIMA_PRIORITY_SUBSECTIONS if label in by_label]
             for label in preferred_labels:
@@ -2688,6 +3028,17 @@ class SearchService:
             for label, block in blocks:
                 heading_line = (block.splitlines()[0] if block.splitlines() else "").lower()
                 if "qnh" in heading_line:
+                    expanded = self._expand_aip_subsection_block(blocks, label)
+                    return label, expanded or block
+        if query_profile.get("raim_intent"):
+            preferred_labels = [label for label in RAIM_PRIORITY_SUBSECTIONS if label in by_label]
+            for label in preferred_labels:
+                block = by_label[label]
+                if self._has_raim_evidence(block.lower()):
+                    expanded = self._expand_aip_subsection_block(blocks, label)
+                    return label, expanded or block
+            for label, block in blocks:
+                if self._has_raim_evidence(block.lower()):
                     expanded = self._expand_aip_subsection_block(blocks, label)
                     return label, expanded or block
 
