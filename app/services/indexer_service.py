@@ -13,7 +13,7 @@ from app.config import Settings
 from app.services.canonical_store import CanonicalStore
 from app.services.embedding_service import EmbeddingService
 from app.services.r2_catalog import RegulationCatalog
-from app.services.section_parser import chunk_words, split_into_sections
+from app.services.section_parser import chunk_chars, split_into_sections
 from app.services.vector_store import VectorStore
 
 
@@ -94,10 +94,11 @@ class IndexerService:
                     metadatas: list[dict[str, Any]] = []
                     for section_index, section in enumerate(persisted_sections):
                         chunks = list(
-                            chunk_words(
+                            chunk_chars(
                                 section["text"],
-                                chunk_size=self._settings.chunk_size_words,
-                                overlap=self._settings.chunk_overlap_words,
+                                # Convert word counts to approximate char counts (×6 chars/word)
+                                chunk_size=self._settings.chunk_size_words * 6,
+                                overlap=self._settings.chunk_overlap_words * 6,
                             )
                         )
                         section_header = f"{section['citation']} {section['title']}".strip()

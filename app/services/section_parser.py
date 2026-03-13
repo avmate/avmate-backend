@@ -456,3 +456,68 @@ def chunk_words(text: str, chunk_size: int, overlap: int) -> Iterable[str]:
         if chunk:
             chunks.append(chunk)
     return chunks
+
+
+# Ordered separators for legal/regulatory text: prefer structural boundaries
+# before falling back to arbitrary character splits.
+_LEGAL_SEPARATORS = ["\n\n", "\n", "; ", " "]
+
+
+def chunk_chars(text: str, chunk_size: int, overlap: int) -> list[str]:
+    """Split text into chunks that respect legal paragraph boundaries.
+
+    Tries \\n\\n, \\n, '; ', then ' ' as split points in that order.
+    After chunking, each chunk (except the first) is prefixed with the tail
+    of the prior chunk so context carries across boundaries (overlap).
+    """
+    if not text or not text.strip():
+        return []
+
+    def _split(txt: str, separators: list[str]) -> list[str]:
+        if len(txt) <= chunk_size:
+            stripped = txt.strip()
+            return [stripped] if stripped else []
+
+        for i, sep in enumerate(separators):
+            if sep not in txt:
+                continue
+            pieces = txt.split(sep)
+            chunks: list[str] = []
+            current = ""
+            for piece in pieces:
+                if not piece.strip():
+                    continue
+                candidate = (current + sep + piece) if current else piece
+                if len(candidate) <= chunk_size:
+                    current = candidate
+                else:
+                    if current:
+                        chunks.append(current.strip())
+                    if len(piece) > chunk_size:
+                        chunks.extend(_split(piece, separators[i + 1 :]))
+                        current = ""
+                    else:
+                        current = piece
+            if current.strip():
+                chunks.append(current.strip())
+            if chunks:
+                return chunks
+
+        # No separator worked — hard split
+        step = max(chunk_size - overlap, 1)
+        return [
+            txt[j : j + chunk_size].strip()
+            for j in range(0, len(txt), step)
+            if txt[j : j + chunk_size].strip()
+        ]
+
+    raw = _split(text, _LEGAL_SEPARATORS)
+    if not raw or overlap <= 0:
+        return raw
+
+    # Prefix each chunk after the first with the tail of the previous chunk
+    result = [raw[0]]
+    for i in range(1, len(raw)):
+        tail = raw[i - 1][-overlap:].strip()
+        result.append((tail + " " + raw[i]).strip() if tail else raw[i])
+    return result

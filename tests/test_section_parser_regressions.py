@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from app.services.section_parser import derive_precise_citation, extract_citations, split_into_sections
+from app.services.section_parser import chunk_chars, derive_precise_citation, extract_citations, split_into_sections
 
 
 class SectionParserRegressionTests(unittest.TestCase):
@@ -141,6 +141,42 @@ Division 61.I.3
         self.assertIn("200 hours of aeronautical experience", by_citation["CASR 61.610"]["text"])
         self.assertEqual(sum(1 for section in sections if section["citation"] == "CASR 61.395"), 1)
         self.assertEqual(sum(1 for section in sections if section["citation"] == "CASR 61.565"), 1)
+
+    def test_split_into_sections_skips_aip_toc_entries_and_keeps_real_section(self) -> None:
+        text = """
+1.18 Speed Restrictions.....ENR 1.5-18
+
+1.18 Speed Restrictions
+Pilots must comply with the published airspace speed limitations. This section contains the operative
+rule text and enough prose to be indexed correctly instead of being mistaken for a table-of-contents
+pointer.
+        """.strip()
+
+        sections = split_into_sections(text, regulation_type="AIP")
+
+        self.assertEqual(len(sections), 1)
+        self.assertEqual(sections[0]["citation"], "AIP 1.18")
+        self.assertNotIn(".....", sections[0]["text"])
+        self.assertIn("operative", sections[0]["text"])
+        self.assertIn("rule text", sections[0]["text"])
+
+    def test_chunk_chars_prefers_legal_boundaries_before_hard_split(self) -> None:
+        text = (
+            "6.2 Special Alternate Weather Minima\n\n"
+            "(a) The aircraft must meet the approach capability criteria;\n"
+            "(b) The crew must be authorised for the procedure;\n"
+            "(c) The aerodrome entry must identify the special alternate minima."
+        )
+
+        chunks = chunk_chars(text, chunk_size=110, overlap=20)
+
+        self.assertGreaterEqual(len(chunks), 2)
+        self.assertTrue(chunks[0].startswith("6.2 Special Alternate Weather Minima"))
+        self.assertIn("(a) The aircraft must meet the approach capability criteria", " ".join(chunks))
+        self.assertIn("(b) The crew must be authorised for the procedure", " ".join(chunks))
+        self.assertIn("(c) The aerodrome entry must identify the special alternate minima.", " ".join(chunks))
+        self.assertTrue(all("criteria" in chunk or "(a) The aircraft" not in chunk for chunk in chunks))
+        self.assertTrue(all("procedure" in chunk or "(b) The crew" not in chunk for chunk in chunks))
 
 
 if __name__ == "__main__":
