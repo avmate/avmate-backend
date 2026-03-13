@@ -1,21 +1,26 @@
 from __future__ import annotations
 
 import csv
+import io
 import json
 import os
 import random
 import re
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
+import pdfplumber
 import requests
 from sqlalchemy import select
 
 from app.config import get_settings, load_manifest_file
 from app.db import session_scope
 from app.models import RegulationSection
+from app.services.r2_catalog import RegulationCatalog
+from app.services.section_parser import split_into_sections
 
 
 BASE_URL = os.getenv("AVMATE_BASE_URL", "https://avmate-backend-production.up.railway.app").rstrip("/")
@@ -27,6 +32,7 @@ RETRY_ATTEMPTS = int(os.getenv("AVMATE_CASE_RETRY_ATTEMPTS", "5"))
 RETRY_DELAY_SECONDS = float(os.getenv("AVMATE_CASE_RETRY_DELAY_SECONDS", "8"))
 QUERY_DELAY_SECONDS = float(os.getenv("AVMATE_QUERY_DELAY_SECONDS", "0.55"))
 TOP_K = int(os.getenv("AVMATE_RANDOM_QUERY_TOP_K", "5"))
+QUERY_CONCURRENCY = max(1, int(os.getenv("AVMATE_QUERY_CONCURRENCY", "1")))
 REPORT_PATH = Path(os.getenv("AVMATE_RANDOM_QUERY_REPORT", "stress_random_queries_report.json"))
 MIN_QUERIES_PER_MANUAL = int(os.getenv("AVMATE_MIN_QUERIES_PER_MANUAL", "1"))
 QUERY_BANK_PATHS = os.getenv(
@@ -117,6 +123,15 @@ class QueryCase:
     out_of_scope: bool = False
 
 
+@dataclass(frozen=True)
+class SectionSeed:
+    citation: str
+    regulation_type: str
+    page_ref: str = ""
+    table_ref: str = ""
+    source_file: str = ""
+
+
 @dataclass
 class QueryResult:
     ok: bool
@@ -197,6 +212,86 @@ def build_query_case(row: RegulationSection) -> QueryCase | None:
         regulation_type=regulation_type,
         source_file=normalize_spaces(row.source_file),
     )
+
+
+def _resolve_local_catalog_path(relative_path: str) -> Path | None:
+    normalized = Path(relative_path.replace("/", os.sep))
+    current = Path(__file__).resolve()
+    for base in current.parents:
+        candidate = base / normalized
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _extract_pdf_text(source_path: Path | None, source_url: str, timeout_seconds: int) -> str:
+    if source_path and source_path.exists():
+        with pdfplumber.open(str(source_path)) as pdf:
+            text_parts: list[str] = []
+            for page in pdf.pages:
+                page_text = page.extract_text() or ""
+                if page_text.strip():
+                    text_parts.append(page_text)
+            return "\n".join(text_parts)
+
+    response = requests.get(source_url, timeout=timeout_seconds)
+    response.raise_for_status()
+    with pdfplumber.open(io.BytesIO(response.content)) as pdf:
+        text_parts: list[str] = []
+        for page in pdf.pages:
+            page_text = page.extract_text() or ""
+            if page_text.strip():
+                text_parts.append(page_text)
+        return "\n".join(text_parts)
+
+
+def _load_catalog_section_seeds() -> list[SectionSeed]:
+    settings = get_settings()
+    catalog = RegulationCatalog(
+        base_url=settings.r2_base_url,
+        manifest_path=settings.local_manifest_path,
+        manifest_url=settings.r2_manifest_url,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    documents = catalog.load_documents()
+    seeds: list[SectionSeed] = []
+    for index, document in enumerate(documents, start=1):
+        try:
+            local_path = _resolve_local_catalog_path(document["path"])
+            text = _extract_pdf_text(local_path, document["source_url"], settings.request_timeout_seconds)
+            sections = split_into_sections(text, regulation_type=document.get("type", ""))
+            for section in sections:
+                citation = normalize_spaces(section.get("citation", ""))
+                regulation_type = normalize_spaces(document.get("type", "UNKNOWN")).upper()
+                page_ref = normalize_spaces(section.get("page_ref", ""))
+                if not citation:
+                    continue
+                if not is_precise_citation(
+                    expected_output_citation(
+                        SectionSeed(
+                            citation=citation,
+                            regulation_type=regulation_type,
+                            page_ref=page_ref,
+                            table_ref=normalize_spaces(section.get("table_ref", "")),
+                            source_file=normalize_spaces(document["path"]),
+                        )
+                    ),
+                    regulation_type,
+                ):
+                    continue
+                seeds.append(
+                    SectionSeed(
+                        citation=citation,
+                        regulation_type=regulation_type,
+                        page_ref=page_ref,
+                        table_ref=normalize_spaces(section.get("table_ref", "")),
+                        source_file=normalize_spaces(document["path"]),
+                    )
+                )
+            print(f"Catalog parse {index}/{len(documents)}: {document['path']} -> {len(sections)} sections")
+        except Exception as exc:  # noqa: BLE001
+            print(f"Catalog parse failed for {document['path']}: {exc}")
+    return seeds
 
 
 def _sample_manual_rows(rows: list[RegulationSection], n: int) -> list[RegulationSection]:
@@ -317,12 +412,12 @@ def load_query_bank_cases(paths_csv: str) -> list[QueryCase]:
     return cases
 
 
-def load_random_sections(count: int) -> list[RegulationSection]:
+def load_random_sections(count: int) -> list[RegulationSection | SectionSeed]:
     with session_scope() as session:
         rows = session.scalars(
             select(RegulationSection).where(RegulationSection.citation.is_not(None), RegulationSection.text.is_not(None))
         ).all()
-    usable: list[RegulationSection] = []
+    usable: list[RegulationSection | SectionSeed] = []
     for row in rows:
         if not row.citation or not row.text:
             continue
@@ -333,9 +428,12 @@ def load_random_sections(count: int) -> list[RegulationSection]:
             continue
         usable.append(row)
     if not usable:
+        catalog_rows = _load_catalog_section_seeds()
+        usable.extend(catalog_rows)
+    if not usable:
         return []
 
-    by_manual: dict[str, list[RegulationSection]] = {}
+    by_manual: dict[str, list[RegulationSection | SectionSeed]] = {}
     for row in usable:
         manual_key = normalize_spaces(row.source_file) or "unknown_source"
         by_manual.setdefault(manual_key, []).append(row)
@@ -494,16 +592,28 @@ def run_round(round_number: int, cases: list[QueryCase]) -> tuple[float, list[Qu
     print(f"\nRound {round_number}: {len(cases)} queries")
     results: list[QueryResult] = []
     passed = 0
-    for idx, case in enumerate(cases, start=1):
-        result = query_api(case)
-        results.append(result)
-        if result.ok:
-            passed += 1
-        if idx % 100 == 0 or idx == len(cases):
-            accuracy = passed / idx
-            print(f"  progress {idx}/{len(cases)} accuracy={accuracy:.4f}")
-        if QUERY_DELAY_SECONDS > 0:
-            time.sleep(QUERY_DELAY_SECONDS)
+    if QUERY_CONCURRENCY <= 1:
+        for idx, case in enumerate(cases, start=1):
+            result = query_api(case)
+            results.append(result)
+            if result.ok:
+                passed += 1
+            if idx % 100 == 0 or idx == len(cases):
+                accuracy = passed / idx
+                print(f"  progress {idx}/{len(cases)} accuracy={accuracy:.4f}")
+            if QUERY_DELAY_SECONDS > 0:
+                time.sleep(QUERY_DELAY_SECONDS)
+    else:
+        with ThreadPoolExecutor(max_workers=QUERY_CONCURRENCY) as executor:
+            futures = [executor.submit(query_api, case) for case in cases]
+            for idx, future in enumerate(as_completed(futures), start=1):
+                result = future.result()
+                results.append(result)
+                if result.ok:
+                    passed += 1
+                if idx % 100 == 0 or idx == len(cases):
+                    accuracy = passed / idx
+                    print(f"  progress {idx}/{len(cases)} accuracy={accuracy:.4f}")
     accuracy = passed / max(len(cases), 1)
     return accuracy, results
 
@@ -512,6 +622,7 @@ def main() -> int:
     print(f"Target URL: {BASE_URL}")
     print(f"Target accuracy: {TARGET_ACCURACY:.2%}")
     print(f"Queries per round: {QUERY_COUNT}")
+    print(f"Query concurrency: {QUERY_CONCURRENCY}")
     print(f"Minimum per manual: {MIN_QUERIES_PER_MANUAL}")
     print(f"Query banks: {QUERY_BANK_PATHS}")
 

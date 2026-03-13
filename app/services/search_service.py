@@ -87,6 +87,7 @@ CIRCLING_PROCEDURE_PRIORITY_SUBSECTIONS = (
     "1.6.7.5",
     "1.9.1",
 )
+MISSED_APPROACH_PRIORITY_SUBSECTIONS = ("1.9.1", "2.11.2.3", "1.6.7.2", "1.6.7.3")
 HEADING_ROLLUP_HINTS = (
     "criteria",
     "criterion",
@@ -254,6 +255,7 @@ class SearchService:
             or bool(requested_citations)
             or bool(query_profile.get("weather_minima_intent"))
             or bool(query_profile.get("qnh_intent"))
+            or bool(query_profile.get("missed_approach_intent"))
             or bool(query_profile.get("raim_intent"))
             or bool(query_profile.get("cpl_intent"))
             or bool(query_profile.get("circling_procedure_intent"))
@@ -283,7 +285,8 @@ class SearchService:
                     elif query_profile.get("qnh_intent"):
                         references = self._merge_references(references, lexical_fallback_refs, limit=max(top_k * 2, 10))
                     elif (
-                        query_profile.get("raim_intent")
+                        query_profile.get("missed_approach_intent")
+                        or query_profile.get("raim_intent")
                         or query_profile.get("circling_procedure_intent")
                         or query_profile.get("cpl_intent")
                         or query_profile.get("speed_limit_intent")
@@ -328,6 +331,8 @@ class SearchService:
         if query_profile.get("qnh_intent"):
             references = self._prioritize_qnh_references(references, query_profile, top_k)
             references = self._ensure_parent_subsection_reference(references, parent_label="5.3", limit=top_k)
+        if query_profile.get("missed_approach_intent"):
+            references = self._prioritize_missed_approach_references(references, top_k)
         if query_profile.get("raim_intent"):
             references = self._prioritize_raim_references(references, top_k)
         if query_profile.get("cpl_intent"):
@@ -360,7 +365,8 @@ class SearchService:
             references = self._dedupe_by_subsection_label(references, limit=top_k)
         references = self._drop_malformed_citations(references, limit=top_k)
         if not references and (
-            query_profile.get("raim_intent")
+            query_profile.get("missed_approach_intent")
+            or query_profile.get("raim_intent")
             or query_profile.get("cpl_intent")
             or query_profile.get("circling_procedure_intent")
             or query_profile.get("speed_limit_intent")
@@ -490,6 +496,15 @@ class SearchService:
                 if item.citation == "CASR 91.455":
                     return self._prefer_operational_reference_text(item, query_profile)
             return self._prefer_operational_reference_text(lead, query_profile)
+        if query_profile.get("missed_approach_intent"):
+            for citation in (
+                "AIP ENR 1.5 - 10 subsection 1.9.1",
+                "AIP ENR 1.1 - 15 subsection 2.11.2.3",
+            ):
+                for item in references:
+                    if item.citation == citation:
+                        return item
+            return lead
         if query_profile.get("raim_intent"):
             for citation in (
                 "AIP ENR 1.1 - 28 subsection 4.8.1",
@@ -560,6 +575,13 @@ class SearchService:
             or ("commercial pilot licence" in query_lower)
             or ("commercial pilot license" in query_lower)
         )
+        missed_approach_intent = (
+            ("missed approach" in query_lower or "go missed" in query_lower or "missed-approach" in query_lower)
+            and any(
+                token in query_lower
+                for token in ("final", "final approach", "final segment", "visual reference", "mapt", "decision altitude", "da", "ra height", "runway")
+            )
+        )
         circling_query = self._is_circling_query(query_lower)
         circling_procedure_intent = circling_query and any(
             token in query_lower
@@ -599,6 +621,9 @@ class SearchService:
         if cpl_intent:
             terms.extend(["commercial", "pilot", "licence", "license", "cpl", "aeronautical", "experience", "hours", "part", "61"])
             phrases.extend(["commercial pilot licence", "aeronautical experience"])
+        if missed_approach_intent:
+            terms.extend(["missed", "approach", "final", "visual", "reference", "mapt", "da", "ra", "height", "runway"])
+            phrases.extend(["missed approach", "final approach", "visual reference", "ra height"])
         if circling_query:
             terms.extend(["circling", "circle-to-land", "circle", "visual", "runway", "approach", "minima"])
             phrases.extend(["circling approach", "visual circling", "circling area"])
@@ -641,6 +666,9 @@ class SearchService:
         qnh_intent = "qnh" in query_lower
         if qnh_intent:
             required_patterns.append(re.compile(r"\bqnh\b", re.IGNORECASE))
+        if missed_approach_intent:
+            required_patterns.append(re.compile(r"\bmissed\s+approach\b", re.IGNORECASE))
+            required_patterns.append(re.compile(r"\b(?:final|visual\s+reference|mapt|da|ra\s+height|runway)\b", re.IGNORECASE))
         if circling_procedure_intent:
             required_patterns.append(re.compile(r"\b(?:approach|visual|runway|area|manoeuvre)\b", re.IGNORECASE))
         if raim_intent:
@@ -699,6 +727,13 @@ class SearchService:
                 "atc",
                 "aais",
                 "watir",
+                "missed",
+                "approach",
+                "final",
+                "mapt",
+                "visual",
+                "reference",
+                "runway",
                 "raim",
                 "gnss",
                 "integrity",
@@ -740,6 +775,7 @@ class SearchService:
         aip_preferred_intent = bool(
             weather_minima_intent
             or (circling_query and has_measure)
+            or missed_approach_intent
             or circling_procedure_intent
             or raim_intent
             or qnh_intent
@@ -758,6 +794,7 @@ class SearchService:
             "special_weather_minima_intent": special_weather_minima_intent,
             "aip_preferred_intent": aip_preferred_intent,
             "qnh_intent": qnh_intent,
+            "missed_approach_intent": missed_approach_intent,
             "raim_intent": raim_intent,
             "cpl_intent": cpl_intent,
             "circling_procedure_intent": circling_procedure_intent,
@@ -789,6 +826,7 @@ class SearchService:
         strict_single_reference = bool(query_profile.get("strict_single_reference"))
         aip_preferred_intent = bool(query_profile.get("aip_preferred_intent"))
         qnh_intent = bool(query_profile.get("qnh_intent"))
+        missed_approach_intent = bool(query_profile.get("missed_approach_intent"))
         raim_intent = bool(query_profile.get("raim_intent"))
         weather_minima_intent = bool(query_profile.get("weather_minima_intent"))
         special_weather_minima_intent = bool(query_profile.get("special_weather_minima_intent"))
@@ -833,6 +871,7 @@ class SearchService:
             )
         )
         qnh_evidence = bool(re.search(r"\bqnh\b", document_lower) or re.search(r"\bqnh\b", citation_lower))
+        missed_approach_evidence = self._has_missed_approach_evidence(document_lower)
         raim_evidence = self._has_raim_evidence(document_lower)
         weather_phrase_hit = bool(re.search(r"\bspecial\s+alternate\s+weather\s+minima\b", document_lower))
         cpl_identity = bool(
@@ -870,6 +909,8 @@ class SearchService:
                 passes_gate = False
             if qnh_intent and not qnh_evidence and semantic_score < 0.9:
                 passes_gate = False
+            if missed_approach_intent and not missed_approach_evidence and semantic_score < 0.88:
+                passes_gate = False
             if raim_intent and not raim_evidence and semantic_score < 0.88:
                 passes_gate = False
             if cpl_intent and not cpl_evidence and semantic_score < 0.9:
@@ -882,7 +923,7 @@ class SearchService:
                 passes_gate = False
             if fuel_requirement_intent and not fuel_requirement_evidence and semantic_score < 0.88:
                 passes_gate = False
-            if (raim_intent or circling_procedure_intent) and str(regulation_type or "").upper() != "AIP" and semantic_score < 0.97:
+            if (missed_approach_intent or raim_intent or circling_procedure_intent) and str(regulation_type or "").upper() != "AIP" and semantic_score < 0.97:
                 passes_gate = False
             if passenger_recency_intent and str(regulation_type or "").upper() != "CASR" and semantic_score < 0.97:
                 passes_gate = False
@@ -933,6 +974,10 @@ class SearchService:
             score -= 0.15
         if qnh_intent:
             score += 0.12 if qnh_evidence else -0.2
+        if missed_approach_intent:
+            score += 0.22 if missed_approach_evidence else -0.24
+            if str(regulation_type or "").upper() != "AIP":
+                score -= 0.3
         if raim_intent:
             score += 0.22 if raim_evidence else -0.24
             if str(regulation_type or "").upper() != "AIP":
@@ -1031,6 +1076,7 @@ class SearchService:
         intent_tokens = query_profile.get("intent_tokens", [])
         numeric_intent = bool(query_profile.get("numeric_intent"))
         qnh_intent = bool(query_profile.get("qnh_intent"))
+        missed_approach_intent = bool(query_profile.get("missed_approach_intent"))
         raim_intent = bool(query_profile.get("raim_intent"))
         cpl_intent = bool(query_profile.get("cpl_intent"))
         circling_procedure_intent = bool(query_profile.get("circling_procedure_intent"))
@@ -1088,6 +1134,7 @@ class SearchService:
             toc_penalty = self._table_of_contents_penalty(canonical_text)
             numeric_evidence = bool(re.search(r"\b\d+(?:\.\d+)?\s*(?:nm|ft|m|kts|kt|hpa)\b", text_lower))
             qnh_evidence = "qnh" in text_lower or "qnh" in citation_lower
+            missed_approach_evidence = self._has_missed_approach_evidence(text_lower)
             raim_evidence = self._has_raim_evidence(text_lower)
             cpl_evidence = bool(
                 (
@@ -1134,6 +1181,10 @@ class SearchService:
                     score += 0.12
                 if subsection == "1.4.1":
                     score += 0.14
+            if missed_approach_intent:
+                score += 0.24 if missed_approach_evidence else -0.28
+                if regulation_type.upper() != "AIP":
+                    score -= 0.34
             if raim_intent:
                 score += 0.24 if raim_evidence else -0.28
                 if regulation_type.upper() != "AIP":
@@ -1195,6 +1246,7 @@ class SearchService:
         if not self._canonical_store:
             return []
 
+        missed_approach_intent = bool(query_profile.get("missed_approach_intent"))
         raim_intent = bool(query_profile.get("raim_intent"))
         cpl_intent = bool(query_profile.get("cpl_intent"))
         circling_procedure_intent = bool(query_profile.get("circling_procedure_intent"))
@@ -1202,7 +1254,8 @@ class SearchService:
         passenger_recency_intent = bool(query_profile.get("passenger_recency_intent"))
         fuel_requirement_intent = bool(query_profile.get("fuel_requirement_intent"))
         if not (
-            raim_intent
+            missed_approach_intent
+            or raim_intent
             or cpl_intent
             or circling_procedure_intent
             or speed_limit_intent
@@ -1214,6 +1267,21 @@ class SearchService:
         query_terms = [term for term in query_profile.get("terms", []) if len(term) >= 3]
         seed_terms: list[str] = list(query_terms)
         regulation_hints: list[str | None] = []
+        if missed_approach_intent:
+            seed_terms.extend(
+                [
+                    "missed approach",
+                    "missed",
+                    "approach",
+                    "final",
+                    "visual reference",
+                    "mapt",
+                    "da",
+                    "ra height",
+                    "runway",
+                ]
+            )
+            regulation_hints.extend(["AIP", None])
         if raim_intent:
             seed_terms.extend(
                 [
@@ -1512,12 +1580,23 @@ class SearchService:
             score += 0.3 if page_match else -0.26
 
         cpl_intent = bool(query_profile.get("cpl_intent"))
+        missed_approach_intent = bool(query_profile.get("missed_approach_intent"))
         raim_intent = bool(query_profile.get("raim_intent"))
         circling_procedure_intent = bool(query_profile.get("circling_procedure_intent"))
         speed_limit_intent = bool(query_profile.get("speed_limit_intent"))
         passenger_recency_intent = bool(query_profile.get("passenger_recency_intent"))
         fuel_requirement_intent = bool(query_profile.get("fuel_requirement_intent"))
         fixed_wing_hint = bool(query_profile.get("fixed_wing_hint"))
+        if missed_approach_intent:
+            missed_approach_evidence = self._has_missed_approach_evidence(text_lower)
+            if missed_approach_evidence:
+                score += 0.48
+            else:
+                score -= 0.4
+            if regulation_type.upper() == "AIP":
+                score += 0.18
+            if subsection in MISSED_APPROACH_PRIORITY_SUBSECTIONS:
+                score += 0.26
         if raim_intent:
             raim_evidence = self._has_raim_evidence(text_lower)
             if raim_evidence:
@@ -1699,6 +1778,11 @@ class SearchService:
                 "CASR 61.590 and CASR 61.610: for an aeroplane CPL, the minimum aeronautical experience is "
                 "150 hours if the applicant completed an integrated training course, or 200 hours if the applicant did not."
             )
+        if "missed approach" in query_lower or "go missed" in query_lower:
+            return (
+                "AIP ENR 1.5 - 10 subsection 1.9.1: a pilot must fly the missed approach on final if visual reference is not established at or before the MAPT or DA/RA Height, "
+                "or if a landing cannot be completed from the runway approach."
+            )
         if "raim" in query_lower:
             return (
                 "AIP ENR 1.1 subsections 4.8.1, 6.3.3, 6.3.4 and 6.3.5: if RAIM or GNSS integrity is not available, "
@@ -1790,6 +1874,11 @@ class SearchService:
                 f"Use {top_reference.citation} first. For QNH questions, only use sources explicitly approved in the cited AIP text, "
                 "then apply any related minima adjustments from linked QNH subsections."
             )
+        if "missed approach" in query_lower or "go missed" in query_lower:
+            return (
+                "In plain English: if you reach the point on final where the procedure requires visual reference and you do not have it, "
+                "or you cannot safely complete the landing from the approach, you must stop the landing attempt and fly the published missed approach."
+            )
         if "raim" in query_lower:
             return (
                 "In plain English: if RAIM drops out, you cannot assume GNSS integrity is good enough for normal IFR use. "
@@ -1860,6 +1949,12 @@ class SearchService:
                 "Example: A pilot is flying IFR from Archerfield to Sunshine Coast and plans the RNP RWY 31 approach. "
                 f"Before descending to DA, the pilot confirms QNH from an approved source under {top_reference.citation}. "
                 "If only forecast QNH is available, the pilot does not treat it as valid for pressure-altitude accuracy checks and applies the appropriate minima logic from the cited QNH subsections."
+            )
+        if "missed approach" in query_lower or "go missed" in query_lower:
+            return (
+                "Example: a pilot is established on final on an instrument approach and reaches DA without the required visual reference. "
+                "Instead of continuing to land, the pilot immediately flies the published missed approach. "
+                "The same outcome applies if the runway comes into view too late to complete a normal landing from the approach."
             )
         if "raim" in query_lower:
             return (
@@ -2522,6 +2617,44 @@ class SearchService:
 
         return unique[:top_k]
 
+    def _prioritize_missed_approach_references(self, references: list[ReferenceItem], top_k: int) -> list[ReferenceItem]:
+        if not references:
+            return []
+
+        scored: list[tuple[float, ReferenceItem]] = []
+        for item in references:
+            text = f"{item.citation} {item.title} {item.text}".lower()
+            subsection = self._citation_subsection_label(item.citation)
+            score = float(item.score)
+            if item.citation == "AIP ENR 1.5 - 10 subsection 1.9.1":
+                score += 2.6
+            elif item.citation == "AIP ENR 1.1 - 15 subsection 2.11.2.3":
+                score += 1.0
+            elif subsection in MISSED_APPROACH_PRIORITY_SUBSECTIONS:
+                score += 0.5
+            if self._has_missed_approach_evidence(text):
+                score += 0.65
+            if "visual reference is not established" in text:
+                score += 0.3
+            if "mapt" in text or "da/ra" in text or "ra height" in text:
+                score += 0.2
+            if item.regulation_type.upper() != "AIP":
+                score -= 1.3
+            scored.append((score, item))
+
+        ordered = [item for _, item in sorted(scored, key=lambda pair: pair[0], reverse=True)]
+        unique: list[ReferenceItem] = []
+        seen: set[str] = set()
+        for item in ordered:
+            key = item.citation.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(item)
+            if len(unique) >= top_k:
+                break
+        return unique
+
     def _prioritize_raim_references(self, references: list[ReferenceItem], top_k: int) -> list[ReferenceItem]:
         if not references:
             return []
@@ -2796,6 +2929,7 @@ class SearchService:
         intent_tokens = query_profile.get("intent_tokens", [])
         terms = query_profile.get("terms", [])
         qnh_intent = bool(query_profile.get("qnh_intent"))
+        missed_approach_intent = bool(query_profile.get("missed_approach_intent"))
         raim_intent = bool(query_profile.get("raim_intent"))
         circling_procedure_intent = bool(query_profile.get("circling_procedure_intent"))
         passenger_recency_intent = bool(query_profile.get("passenger_recency_intent"))
@@ -2810,6 +2944,8 @@ class SearchService:
 
         if qnh_intent and "qnh" not in text:
             return False
+        if missed_approach_intent and not self._has_missed_approach_evidence(text):
+            return False
         if raim_intent and not self._has_raim_evidence(text):
             return False
         if circling_procedure_intent and not self._has_circling_procedure_evidence(text):
@@ -2818,7 +2954,7 @@ class SearchService:
             return False
         if fuel_requirement_intent and ("fuel" not in text or not re.search(r"\b(?:requirement|requirements|reserve)\b", text)):
             return False
-        if (raim_intent or circling_procedure_intent) and item.regulation_type.upper() != "AIP":
+        if (missed_approach_intent or raim_intent or circling_procedure_intent) and item.regulation_type.upper() != "AIP":
             return False
         if passenger_recency_intent and item.regulation_type.upper() != "CASR":
             return False
@@ -2884,6 +3020,19 @@ class SearchService:
         if not lowered:
             return False
         return bool(re.search(r"\braim\b", lowered) and re.search(r"\b(?:gnss|integrity|alert|negative)\b", lowered))
+
+    def _has_missed_approach_evidence(self, text: str) -> bool:
+        lowered = str(text or "").lower()
+        if not lowered:
+            return False
+        if "missed approach" not in lowered:
+            return False
+        return bool(
+            re.search(
+                r"\b(?:final|visual\s+reference|mapt|da|ra\s+height|landing|runway|cannot\s+be\s+effected)\b",
+                lowered,
+            )
+        )
 
     def _has_circling_procedure_evidence(self, text: str) -> bool:
         lowered = str(text or "").lower()
@@ -3002,6 +3151,17 @@ class SearchService:
                     return label, expanded or block
             for label, block in blocks:
                 if self._has_circling_procedure_evidence(block.lower()):
+                    expanded = self._expand_aip_subsection_block(blocks, label)
+                    return label, expanded or block
+        if query_profile.get("missed_approach_intent"):
+            preferred_labels = [label for label in MISSED_APPROACH_PRIORITY_SUBSECTIONS if label in by_label]
+            for label in preferred_labels:
+                block = by_label[label]
+                if self._has_missed_approach_evidence(block.lower()):
+                    expanded = self._expand_aip_subsection_block(blocks, label)
+                    return label, expanded or block
+            for label, block in blocks:
+                if self._has_missed_approach_evidence(block.lower()):
                     expanded = self._expand_aip_subsection_block(blocks, label)
                     return label, expanded or block
 

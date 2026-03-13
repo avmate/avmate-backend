@@ -244,6 +244,13 @@ Additional notes unrelated to special alternate minima.
         self.assertTrue(profile["raim_intent"])
         self.assertTrue(profile["aip_preferred_intent"])
 
+    def test_build_query_profile_sets_missed_approach_intent(self) -> None:
+        profile = self.service._build_query_profile(
+            "What would deem a pilot to conduct a missed approach on final?"
+        )
+        self.assertTrue(profile["missed_approach_intent"])
+        self.assertTrue(profile["aip_preferred_intent"])
+
     def test_build_query_profile_sets_circling_procedure_intent(self) -> None:
         profile = self.service._build_query_profile(
             "Explain the Circle-to-Land procedure and its limitations."
@@ -316,6 +323,29 @@ Additional notes unrelated to special alternate minima.
 
         ranked = self.service._prioritize_raim_references(references, top_k=3)
         self.assertEqual(ranked[0].citation, "AIP ENR 1.1 - 28 subsection 4.8.1")
+
+    def test_prioritize_missed_approach_references_prefers_aip_missed_approach_rule(self) -> None:
+        references = [
+            _reference(
+                "CASR 2.8",
+                regulation_type="CASR",
+                text="CASR Part 141 or Part 142 training provider administration text.",
+                score=0.95,
+            ),
+            _reference(
+                "AIP ENR 1.1 - 15 subsection 2.11.2.3",
+                text="If visual at the minima, the nominated runway becomes the clearance limit. If the aircraft is unable to land from the instrument approach, it is cleared to carry out the published missed approach.",
+                score=0.73,
+            ),
+            _reference(
+                "AIP ENR 1.5 - 10 subsection 1.9.1",
+                text="1.9.1 A missed approach must be executed if visual reference is not established at or before reaching the MAPT or DA/RA Height, or if a landing cannot be effected from a runway approach.",
+                score=0.72,
+            ),
+        ]
+
+        ranked = self.service._prioritize_missed_approach_references(references, top_k=3)
+        self.assertEqual(ranked[0].citation, "AIP ENR 1.5 - 10 subsection 1.9.1")
 
     def test_expand_heading_subsection_references_includes_parent_and_children(self) -> None:
         service = SearchService(
