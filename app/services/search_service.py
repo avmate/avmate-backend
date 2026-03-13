@@ -1,12 +1,15 @@
 """Aviation regulatory search service.
 
 Retrieval flow (per query):
-  1. LLM interprets query  → regulation_type hint + rewritten query + keywords
-  2. Semantic search       → ChromaDB (filtered by regulation_type when known)
-  3. Canonical join        → resolve section_ids to full metadata from SQLite
-  4. Citation filter       → narrow to explicitly requested citations when present
-  5. Lexical fallback      → canonical store keyword search when results are sparse
-  6. LLM answer generation → Claude reads actual regulation text, returns structured answer
+  1. Extract explicit citations from query text
+  2. Exact citation lookup → canonical store direct match (score=1.0, bypasses semantic)
+  3. LLM interprets query  → regulation_type hint + rewritten query + keywords
+  4. Semantic search       → ChromaDB (filtered by regulation_type when known)
+  5. Canonical join        → resolve section_ids to full metadata from SQLite
+  6. Chapter-aware filter  → prevent cross-chapter drift (e.g. ENR 1.4 for ENR 1.5 queries)
+  7. Merge                 → exact hits first, semantic fill after
+  8. Lexical fallback      → canonical store keyword search when results are sparse
+  9. LLM answer generation → Claude reads actual regulation text, returns structured answer
 """
 from __future__ import annotations
 
@@ -49,7 +52,17 @@ class SearchService:
         explicit_citations = extract_citations(query)
         explicit_families = {_detect_family(c) for c in explicit_citations} - {None}
 
-        # 2. LLM interprets query for better semantic retrieval
+        # 2. Exact citation lookup — deterministic, bypasses semantic for structured queries
+        seen_ids: set[str] = set()
+        exact_candidates: list[tuple[float, dict]] = []
+        if explicit_citations:
+            for citation in explicit_citations:
+                for sec in self._canonical_store.get_sections_by_citation_prefix(citation):
+                    if sec["section_id"] not in seen_ids:
+                        exact_candidates.append((1.0, sec))
+                        seen_ids.add(sec["section_id"])
+
+        # 3. LLM interprets query for better semantic retrieval
         regulation_hint: str | None = None
         search_text = query
         keywords: list[str] = []
@@ -70,7 +83,7 @@ class SearchService:
         if explicit_families:
             regulation_hint = next(iter(explicit_families))
 
-        # 3. Semantic retrieval from ChromaDB
+        # 4. Semantic retrieval from ChromaDB
         fetch_k = max(top_k * 8, 40)
         embedding = self._embeddings.encode([search_text])[0]
 
@@ -87,14 +100,13 @@ class SearchService:
             section_ids = _extract_section_ids(raw)
             distances = (raw.get("distances") or [[]])[0]
 
-        # 4. Resolve section_ids → full metadata (regulation_type, citation, text, etc.)
+        # 5. Resolve section_ids → full metadata (regulation_type, citation, text, etc.)
         sections_by_id = {
             s["section_id"]: s
             for s in self._canonical_store.get_sections_by_ids(section_ids)
         }
 
-        seen_ids: set[str] = set()
-        candidates: list[tuple[float, dict]] = []
+        semantic_candidates: list[tuple[float, dict]] = []
         for sid, dist in zip(section_ids, distances):
             if sid in seen_ids:
                 continue
@@ -102,24 +114,34 @@ class SearchService:
             if not section:
                 continue
             score = max(0.0, 1.0 - float(dist))
-            candidates.append((score, section))
-            seen_ids.add(sid)
+            semantic_candidates.append((score, section))
 
-        # 5. Narrow to explicit citations when present
+        # 6. Chapter-aware filter — prevents cross-chapter drift
+        #    e.g. "ENR 1.5 subsection 6.2" must not pull ENR 1.4 results
         if explicit_citations:
-            explicit_lower = [c.lower() for c in explicit_citations]
-            citation_matched = [
-                (s, sec)
-                for s, sec in candidates
-                if any(
-                    sec.get("citation", "").lower().startswith(pfx)
-                    for pfx in explicit_lower
-                )
+            chapter_prefixes = [
+                p for p in (_extract_chapter_prefix(c) for c in explicit_citations) if p
             ]
-            if citation_matched:
-                candidates = citation_matched
+            if chapter_prefixes:
+                chapter_matched = [
+                    (s, sec)
+                    for s, sec in semantic_candidates
+                    if any(
+                        sec.get("citation", "").lower().startswith(pfx.lower())
+                        for pfx in chapter_prefixes
+                    )
+                ]
+                if chapter_matched:
+                    semantic_candidates = chapter_matched
 
-        # 6. Lexical fallback when semantic results are sparse
+        # 7. Merge: exact hits first (score=1.0), semantic fill after
+        candidates: list[tuple[float, dict]] = list(exact_candidates)
+        for score, sec in semantic_candidates:
+            if sec["section_id"] not in seen_ids:
+                candidates.append((score, sec))
+                seen_ids.add(sec["section_id"])
+
+        # 8. Lexical fallback when results are sparse
         if len(candidates) < top_k:
             terms = keywords or [t for t in query.lower().split() if len(t) >= 4]
             lexical = self._canonical_store.search_sections_by_terms(
@@ -132,14 +154,14 @@ class SearchService:
                     candidates.append((0.4, sec))
                     seen_ids.add(sec["section_id"])
 
-        # 7. Rank, deduplicate, take top_k
+        # 9. Rank, deduplicate, take top_k
         candidates.sort(key=lambda x: x[0], reverse=True)
         references = [_section_to_ref(score, sec) for score, sec in candidates[:top_k]]
 
         if not references:
             return _empty_response(request_id)
 
-        # 8. LLM generates the answer from the actual regulatory text
+        # 10. LLM generates the answer from the actual regulatory text
         fallback = _build_fallback(query, references)
         answer_payload: dict = fallback
 
@@ -174,6 +196,17 @@ class SearchService:
 def _detect_family(citation: str) -> str | None:
     m = _FAMILY_RE.match(citation.strip())
     return m.group(1).upper() if m else None
+
+
+def _extract_chapter_prefix(citation: str) -> str:
+    """Return the AIP chapter prefix from a full citation.
+
+    "AIP ENR 1.5 6.2" → "AIP ENR 1.5"
+    "AIP GEN 3.4 2.1" → "AIP GEN 3.4"
+    "CASR 61.385"     → ""  (not an AIP citation)
+    """
+    m = re.match(r"^(AIP\s+(?:GEN|ENR|AD)\s+\d+\.\d+)", citation.strip(), re.IGNORECASE)
+    return m.group(1) if m else ""
 
 
 def _extract_section_ids(raw: dict) -> list[str]:

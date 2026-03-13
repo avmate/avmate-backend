@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import requests
 
 
-BASE_URL = os.getenv("AVMATE_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
+BASE_URL = os.getenv("AVMATE_BASE_URL", "https://avmate-backend-production.up.railway.app").rstrip("/")
 TIMEOUT_SECONDS = int(os.getenv("AVMATE_REGRESSION_TIMEOUT", "90"))
 READY_WAIT_SECONDS = int(os.getenv("AVMATE_READY_WAIT_SECONDS", "120"))
 CASE_RETRY_ATTEMPTS = int(os.getenv("AVMATE_CASE_RETRY_ATTEMPTS", "4"))
@@ -33,33 +33,33 @@ class ExpectedQuery:
 TEST_CASES = [
     ExpectedQuery(
         query="what is the circling radius for a cat C aircraft",
-        expected_citation="AIP ENR 1.5 - 4 subsection 1.6.5. Table 1.1",
+        expected_citation="AIP ENR 1.5 1.6.5",
         expected_phrase="4.11NM",
     ),
     ExpectedQuery(
         query="How can a QNH be considered accurate on receipt?",
-        expected_citation="AIP ENR 1.7 - 2 subsection 1.4.1",
+        expected_citation="AIP ENR 1.7 1.4.1",
         expected_phrase="QNH can be considered accurate",
-        expected_additional_citations=("AIP ENR 1.5 - 38 subsection 5.3",),
+        expected_additional_citations=("AIP ENR 1.5 5.3",),
     ),
     ExpectedQuery(
         query="What is the special alternate weather minima?",
-        expected_citation="AIP ENR 1.5 - 39 subsection 6.2",
+        expected_citation="AIP ENR 1.5 6.2",
         expected_phrase="Special Alternate Weather Minima",
     ),
     ExpectedQuery(
         query="What is the circling radius for category C aircraft?",
-        expected_citation="AIP ENR 1.5 - 4 subsection 1.6.5. Table 1.1",
+        expected_citation="AIP ENR 1.5 1.6.5",
         expected_phrase="4.11NM",
     ),
     ExpectedQuery(
         query="When are special alternate weather minima not available?",
-        expected_citation="AIP ENR 1.5 - 39 subsection 6.2",
+        expected_citation="AIP ENR 1.5 6.2",
         expected_phrase="Special alternate weather minima",
     ),
     ExpectedQuery(
         query="What does ENR 1.5 subsection 6.2 say?",
-        expected_citation="AIP ENR 1.5 - 39 subsection 6.2",
+        expected_citation="AIP ENR 1.5 6.2",
         expected_phrase="Special alternate weather minima",
     ),
 ]
