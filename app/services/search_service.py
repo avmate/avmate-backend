@@ -92,7 +92,14 @@ AIP_OUTPUT_CITATION_PATTERN = re.compile(
     re.IGNORECASE,
 )
 AIP_SOURCE_CITATION_PATTERN = re.compile(r"^AIP\s+[0-9]+(?:\.[0-9]+){1,4}$", re.IGNORECASE)
-ALTITUDE_10000_PATTERN = re.compile(r"\b(?:10000|10,000|10 000|10\s*000|ten\s+thousand)\b", re.IGNORECASE)
+ALTITUDE_10000_PATTERN = re.compile(
+    r"\b(?:10000|10,000|10 000|10\s*000|ten\s+thousand)(?:\s*ft)?\b",
+    re.IGNORECASE,
+)
+SPEED_250_PATTERN = re.compile(
+    r"(?:\b250\s*(?:kt|kts|knots|ias)\b|\b250(?:kt|kts|knots|ias)\b)",
+    re.IGNORECASE,
+)
 
 
 class SearchService:
@@ -361,7 +368,7 @@ class SearchService:
                 citations.append(item.citation)
 
         answer_reference = self._select_answer_reference(query_profile, references)
-        answer = self._build_answer(query, answer_reference)
+        answer = self._build_answer(query, answer_reference, references)
         legal_explanation = self._build_legal_explanation(query, references)
         plain_english = self._build_plain_english(query, answer_reference, references)
         example = self._build_example(query, answer_reference, references)
@@ -526,8 +533,8 @@ class SearchService:
             terms.extend(["commercial", "pilot", "licence", "license", "cpl", "aeronautical", "experience", "hours", "part", "61"])
             phrases.extend(["commercial pilot licence", "aeronautical experience"])
         if speed_limit_intent:
-            terms.extend(["speed", "limit", "below", "10000", "10,000", "knots", "kts", "250"])
-            phrases.extend(["below 10000 feet", "below 10000 ft", "250 knots"])
+            terms.extend(["speed", "limit", "below", "10000", "10,000", "10,000ft", "knots", "kts", "kt", "ias", "250", "250kt"])
+            phrases.extend(["below 10000 feet", "below 10000 ft", "10,000ft", "250 knots", "250kt"])
         if passenger_recency_intent:
             terms.extend(["passenger", "recency", "recent", "experience", "ppl", "pilot", "licence", "license", "61.395"])
             phrases.extend(["passenger recency", "recent experience", "carry passengers"])
@@ -559,9 +566,8 @@ class SearchService:
         if qnh_intent:
             required_patterns.append(re.compile(r"\bqnh\b", re.IGNORECASE))
         if speed_limit_intent:
-            required_patterns.append(re.compile(r"\b(?:speed|knots|kts)\b", re.IGNORECASE))
-            required_patterns.append(re.compile(r"\b(?:10000|10,000|10 000|10\s*000)\b", re.IGNORECASE))
-            required_patterns.append(re.compile(r"\b(?:250)\b", re.IGNORECASE))
+            required_patterns.append(ALTITUDE_10000_PATTERN)
+            required_patterns.append(re.compile(r"(?:\b250\b|250(?:kt|kts|knots|ias)\b)", re.IGNORECASE))
         if cpl_intent:
             required_patterns.append(re.compile(r"\b(?:commercial|cpl)\b", re.IGNORECASE))
             required_patterns.append(re.compile(r"\b(?:pilot|licence|license|part\s*61)\b", re.IGNORECASE))
@@ -745,11 +751,7 @@ class SearchService:
         )
         cpl_experience = bool(re.search(r"\b(?:hours|experience|aeronautical)\b", document_lower))
         cpl_evidence = cpl_identity and cpl_authority and cpl_experience
-        speed_limit_evidence = bool(
-            re.search(r"\b(?:250)\b", document_lower)
-            and re.search(r"\b(?:knots|kts|kt)\b", document_lower)
-            and re.search(r"\b(?:10000|10,000|10 000|10\s*000)\b", document_lower)
-        )
+        speed_limit_evidence = self._has_speed_limit_evidence(document_lower)
         passenger_recency_evidence = bool(
             re.search(r"\bpassenger", document_lower)
             and re.search(r"\b(?:recent|recency|currency|experience)\b", document_lower)
@@ -983,11 +985,7 @@ class SearchService:
                 and (re.search(r"\b(?:pilot|licen[cs]e)\b", text_lower) or re.search(r"\bpart\s*61\b", citation_lower))
                 and re.search(r"\b(?:hours|experience|aeronautical)\b", text_lower)
             )
-            speed_limit_evidence = bool(
-                re.search(r"\b(?:250)\b", text_lower)
-                and re.search(r"\b(?:knots|kts|kt)\b", text_lower)
-                and re.search(r"\b(?:10000|10,000|10 000|10\s*000)\b", text_lower)
-            )
+            speed_limit_evidence = self._has_speed_limit_evidence(text_lower)
             passenger_recency_evidence = bool(
                 re.search(r"\bpassenger", text_lower)
                 and re.search(r"\b(?:recent|recency|currency|experience)\b", text_lower)
@@ -1139,11 +1137,16 @@ class SearchService:
                     "speed",
                     "limit",
                     "250",
+                    "250kt",
                     "knots",
                     "kts",
+                    "kt",
+                    "ias",
                     "below",
                     "10000",
                     "10,000",
+                    "10,000ft",
+                    "class c",
                 ]
             )
             regulation_hints.extend(["AIP", "CASR", "CAR", None])
@@ -1411,11 +1414,7 @@ class SearchService:
                 score -= 0.55
 
         if speed_limit_intent:
-            speed_limit_evidence = bool(
-                re.search(r"\b250\b", text_lower)
-                and re.search(r"\b(?:knots|kts|kt)\b", text_lower)
-                and ALTITUDE_10000_PATTERN.search(text_lower)
-            )
+            speed_limit_evidence = self._has_speed_limit_evidence(text_lower)
             if speed_limit_evidence:
                 score += 0.52
             else:
@@ -1500,8 +1499,10 @@ class SearchService:
         references = self._drop_malformed_citations(references, limit=narrowed_limit)
         return references[:narrowed_limit]
 
-    def _build_answer(self, query: str, top_reference: ReferenceItem) -> str:
+    def _build_answer(self, query: str, top_reference: ReferenceItem, references: list[ReferenceItem]) -> str:
         flattened = " ".join(top_reference.text.split())
+        query_lower = query.lower()
+        citations = {item.citation for item in references}
         category = self._extract_aircraft_category(query)
         if self._query_targets_circling_minima(query) and category:
             circling = self._extract_circling_radius_data(flattened, category)
@@ -1513,6 +1514,16 @@ class SearchService:
                     f"For Category {category} aircraft, circling radius is {radius_value} at {elevation_text} in {top_reference.citation}. "
                     "Use higher row values for higher aerodrome elevations."
                 )
+
+        if (
+            any(token in query_lower for token in ("cpl", "commercial pilot licence", "commercial pilot license"))
+            and "CASR 61.590" in citations
+            and "CASR 61.610" in citations
+        ):
+            return (
+                "CASR 61.590 and CASR 61.610: for an aeroplane CPL, the minimum aeronautical experience is "
+                "150 hours if the applicant completed an integrated training course, or 200 hours if the applicant did not."
+            )
 
         sentence = self._extract_operational_sentence(flattened)
         return f"{top_reference.citation}: {sentence}"
@@ -1587,6 +1598,14 @@ class SearchService:
                 f"Use {top_reference.citation} first. For QNH questions, only use sources explicitly approved in the cited AIP text, "
                 "then apply any related minima adjustments from linked QNH subsections."
             )
+        if (
+            any(token in query_lower for token in ("cpl", "commercial pilot licence", "commercial pilot license"))
+            and {"CASR 61.590", "CASR 61.610"}.issubset({item.citation for item in references})
+        ):
+            return (
+                "In plain English: for an aeroplane CPL, the minimum hour total depends on the training pathway. "
+                "Use 150 hours under CASR 61.590 if the applicant completed an integrated training course, or 200 hours under CASR 61.610 if the applicant did not."
+            )
         category = self._extract_aircraft_category(query)
         if self._query_targets_circling_minima(query) and category:
             circling = self._extract_circling_radius_data(flattened, category)
@@ -1632,6 +1651,15 @@ class SearchService:
                 "Example: A pilot is flying IFR from Archerfield to Sunshine Coast and plans the RNP RWY 31 approach. "
                 f"Before descending to DA, the pilot confirms QNH from an approved source under {top_reference.citation}. "
                 "If only forecast QNH is available, the pilot does not treat it as valid for pressure-altitude accuracy checks and applies the appropriate minima logic from the cited QNH subsections."
+            )
+        if (
+            any(token in query_lower for token in ("cpl", "commercial pilot licence", "commercial pilot license"))
+            and {"CASR 61.590", "CASR 61.610"}.issubset({item.citation for item in references})
+        ):
+            return (
+                "Example: a student applying for an aeroplane CPL checks which training pathway applies. "
+                "If the student completed an integrated course, use CASR 61.590 and plan against 150 hours. "
+                "If the student did not complete an integrated course, use CASR 61.610 and plan against 200 hours."
             )
         category = self._extract_aircraft_category(query)
         if self._query_targets_circling_minima(query) and category:
@@ -2281,6 +2309,8 @@ class SearchService:
                 score += 1.0
             elif re.search(r"^CASR 61\.", item.citation):
                 score += 0.3
+            else:
+                score -= 1.4
             if item.regulation_type.upper() != "CASR":
                 score -= 1.2
             if re.search(r"\bpassenger", text) and re.search(r"\b(?:recent|recency|currency|experience)\b", text):
@@ -2450,6 +2480,8 @@ class SearchService:
             return False
         if passenger_recency_intent and item.regulation_type.upper() != "CASR":
             return False
+        if passenger_recency_intent and not re.search(r"^CASR 61\.", item.citation):
+            return False
         if fuel_requirement_intent and "part 91" in str(query_profile.get("query_lower", "")) and item.regulation_type.upper() != "CASR":
             return False
         if fuel_requirement_intent and fixed_wing_hint and "rotorcraft" in text:
@@ -2479,6 +2511,19 @@ class SearchService:
         if not match:
             return ""
         return match.group(1).upper()
+
+    def _has_speed_limit_evidence(self, text: str) -> bool:
+        lowered = str(text or "").lower()
+        if not lowered:
+            return False
+        has_speed_token = bool(
+            SPEED_250_PATTERN.search(lowered)
+            or (
+                re.search(r"\b250\b", lowered)
+                and re.search(r"\b(?:speed|airspeed|kt|kts|knots|ias)\b", lowered)
+            )
+        )
+        return has_speed_token and bool(ALTITUDE_10000_PATTERN.search(lowered))
 
     def _extract_circling_radius_data(self, text: str, category: str) -> dict[str, str]:
         category_key = category.lower()

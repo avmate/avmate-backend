@@ -237,6 +237,10 @@ Additional notes unrelated to special alternate minima.
         )
         self.assertTrue(profile["fuel_requirement_intent"])
 
+    def test_has_speed_limit_evidence_handles_compact_tokens(self) -> None:
+        text = "Aircraft operating below 10,000FT may be limited to 250KT IAS in the applicable airspace."
+        self.assertTrue(self.service._has_speed_limit_evidence(text))
+
     def test_expand_heading_subsection_references_includes_parent_and_children(self) -> None:
         service = SearchService(
             embeddings=None,
@@ -467,6 +471,28 @@ Additional notes unrelated to special alternate minima.
         self.assertTrue(seeded)
         self.assertIn("authorised to pilot an aircraft carrying passengers", seeded[0].text.lower())
 
+    def test_build_answer_for_cpl_hours_uses_both_integrated_and_non_integrated_rules(self) -> None:
+        refs = [
+            _reference(
+                "CASR 61.590",
+                text="61.590 Aeronautical experience requirements for grant of commercial pilot licences—aeroplane category (1) An applicant must have at least 150 hours of aeronautical experience.",
+                regulation_type="CASR",
+                score=0.92,
+            ),
+            _reference(
+                "CASR 61.610",
+                text="61.610 Aeronautical experience requirements for grant of commercial pilot licences—aeroplane category (1) An applicant must have at least 200 hours of aeronautical experience.",
+                regulation_type="CASR",
+                score=0.91,
+            ),
+        ]
+
+        answer = self.service._build_answer("CPL minimum flight hours", refs[0], refs)
+        self.assertIn("150 hours", answer)
+        self.assertIn("200 hours", answer)
+        self.assertIn("CASR 61.590", answer)
+        self.assertIn("CASR 61.610", answer)
+
     def test_intent_seed_references_for_passenger_recency_prefers_casr_61_395(self) -> None:
         service = SearchService(
             embeddings=None,
@@ -544,6 +570,18 @@ Additional notes unrelated to special alternate minima.
         ]
         ranked = self.service._prioritize_passenger_recency_references(refs, top_k=5)
         self.assertEqual(ranked[0].citation, "CASR 61.395")
+
+    def test_is_reference_relevant_for_passenger_recency_rejects_non_part_61_rules(self) -> None:
+        profile = self.service._build_query_profile(
+            "What are the specific recency requirements for a PPL to carry passengers?"
+        )
+        item = _reference(
+            "CASR 133.370",
+            text="133.370 Composition, number, qualifications and training. The pilot in command must have the recent experience for the flight required by Division 133.N.4.",
+            regulation_type="CASR",
+            score=0.84,
+        )
+        self.assertFalse(self.service._is_reference_relevant(item, profile))
 
     def test_prioritize_cpl_references_promotes_cpl_hour_sections_over_toc_noise(self) -> None:
         refs = [
