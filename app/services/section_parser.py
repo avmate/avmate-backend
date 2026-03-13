@@ -9,7 +9,7 @@ SECTION_PATTERN = re.compile(
     r"(?:CASR|CAR|CAO|MOS|CAA)\s+(?:Part\s+)?(?:[0-9]+[0-9A-Za-z.\-]*)(?:\([0-9A-Za-z]+\))*"
     r"|CAO\s+DOC\s+[0-9A-Za-z.\-]+"
     r"|AIP\s+Australia\s+\d+(?:\.\d+)+"
-    r"|AIP\s+\d+(?:\.\d+)+"
+    r"|AIP\s+(?:(?:GEN|ENR|AD)\s+\d+(?:\.\d+)*(?:\s+\d+(?:\.\d+)*)?|\d+(?:\.\d+)+)"
     r")",
     re.IGNORECASE,
 )
@@ -18,13 +18,13 @@ CITATION_QUERY_PATTERN = re.compile(
     r"(?:CASR|CAR|CAO|MOS|CAA)\s+(?:Part\s+)?(?:[0-9]+[0-9A-Za-z.\-]*)(?:\([0-9A-Za-z]+\))*"
     r"|CAO\s+DOC\s+[0-9A-Za-z.\-]+"
     r"|AIP\s+Australia\s+\d+(?:\.\d+)+"
-    r"|AIP\s+\d+(?:\.\d+)+"
+    r"|AIP\s+(?:(?:GEN|ENR|AD)\s+\d+(?:\.\d+)*(?:\s+\d+(?:\.\d+)*)?|\d+(?:\.\d+)+)"
     r")",
     re.IGNORECASE,
 )
 ENR_SUBSECTION_QUERY_PATTERN = re.compile(
-    r"\b(?:AIP\s+)?(?:GEN|ENR|AD)\s+\d+(?:\.\d+)?(?:\s*-\s*\(?\d+\)?)?\s+"
-    r"(?:subsection|section)\s+([1-9]\d?(?:\.\d+){1,4})\b",
+    r"\b(?:AIP\s+)?(?P<chapter>(?:GEN|ENR|AD)\s+\d+(?:\.\d+)?)(?:\s*-\s*\(?\d+\)?)?\s+"
+    r"(?:subsection|section)\s+(?P<label>[1-9]\d?(?:\.\d+){1,4})\b",
     re.IGNORECASE,
 )
 TABLE_PATTERN = re.compile(r"\bTable\s+\d+(?:\.\d+)+\b", re.IGNORECASE)
@@ -49,6 +49,40 @@ def _normalize_ref(value: str) -> str:
     return " ".join(normalized.split())
 
 
+def _extract_aip_chapter(page_ref: str) -> tuple[str, str]:
+    """Extract (chapter_type, chapter_num) from an AIP page marker.
+
+    e.g. 'ENR 1.5 - 18' → ('ENR', '1.5')
+         'GEN 3.4 - 1'  → ('GEN', '3.4')
+         ''              → ('', '')
+    """
+    m = re.search(r"\b(GEN|ENR|AD)\s+(\d+(?:\.\d+)?)\s*-", page_ref, re.IGNORECASE)
+    if m:
+        return m.group(1).upper(), m.group(2)
+    return "", ""
+
+
+def _build_aip_citation(label: str, page_ref: str) -> str:
+    """Build a precise AIP citation using the chapter context from the nearest page marker.
+
+    label='1.18', page_ref='ENR 1.5 - 18' → 'AIP ENR 1.5 1.18'
+    label='3.4.1', page_ref='GEN 3.4 - 1' → 'AIP GEN 3.4.1'
+    label='4.1',   page_ref='ENR 1.4 - 14'→ 'AIP ENR 1.4 4.1'
+    label='1.18',  page_ref=''             → 'AIP 1.18' (fallback)
+    """
+    chapter_type, chapter_num = _extract_aip_chapter(page_ref)
+    if not chapter_type:
+        return f"AIP {label}"
+    # If the label already starts with chapter_num (e.g. label='3.4.1', chapter='3.4'),
+    # the chapter is embedded — just prefix the type: 'AIP GEN 3.4.1'
+    if label.startswith(chapter_num) and (
+        len(label) == len(chapter_num) or label[len(chapter_num)] == "."
+    ):
+        return f"AIP {chapter_type} {label}"
+    # Otherwise the label is relative to the chapter: 'AIP ENR 1.5 1.18'
+    return f"AIP {chapter_type} {chapter_num} {label}"
+
+
 def extract_citations(text: str) -> list[str]:
     citations: list[str] = []
     for match in CITATION_QUERY_PATTERN.finditer(text):
@@ -56,9 +90,12 @@ def extract_citations(text: str) -> list[str]:
         if citation not in citations:
             citations.append(citation)
     # Accept queries that specify AIP page blocks with explicit subsection labels,
-    # e.g. "ENR 1.5 subsection 6.2", and map them to canonical AIP subsection form.
+    # e.g. "ENR 1.5 subsection 6.2" → "AIP ENR 1.5 6.2"
     for match in ENR_SUBSECTION_QUERY_PATTERN.finditer(text):
-        citation = f"AIP {match.group(1)}"
+        chapter = " ".join(match.group("chapter").split())
+        label = match.group("label")
+        # Reuse _build_aip_citation by constructing a synthetic page_ref
+        citation = _build_aip_citation(label, f"{chapter} - 0")
         if citation not in citations:
             citations.append(citation)
     return citations
@@ -231,8 +268,9 @@ def _split_aip_sections(text: str) -> list[dict]:
             continue
 
         label = match.group("label")
-        citation = f"AIP {label}"
         heading = " ".join(match.group("heading").split()).strip(" .:-")
+        page_ref = extract_page_ref(section_text, full_text=text, section_start=start)
+        citation = _build_aip_citation(label, page_ref)
         title = f"{citation} {heading}".strip()[:160] if heading else citation
         raw.append(
             {
@@ -241,7 +279,7 @@ def _split_aip_sections(text: str) -> list[dict]:
                 "title": title,
                 "part": infer_part(citation),
                 "section_label": label,
-                "page_ref": extract_page_ref(section_text, full_text=text, section_start=start),
+                "page_ref": page_ref,
                 "table_ref": extract_table_ref(section_text),
                 "text": section_text,
             }
