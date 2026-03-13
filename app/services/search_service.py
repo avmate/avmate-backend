@@ -315,6 +315,8 @@ class SearchService:
             references = self._ensure_parent_subsection_reference(references, parent_label="5.3", limit=top_k)
         if query_profile.get("cpl_intent"):
             references = self._prioritize_cpl_references(references, top_k)
+        if query_profile.get("speed_limit_intent"):
+            references = self._prioritize_speed_limit_references(references, top_k)
         if query_profile.get("passenger_recency_intent"):
             references = self._prioritize_passenger_recency_references(references, top_k)
         if query_profile.get("fuel_requirement_intent"):
@@ -654,6 +656,7 @@ class SearchService:
             weather_minima_intent
             or ("circling" in query_lower and has_measure)
             or qnh_intent
+            or speed_limit_intent
             or ("aip" in query_lower)
         )
         return {
@@ -1524,6 +1527,12 @@ class SearchService:
                 "CASR 61.590 and CASR 61.610: for an aeroplane CPL, the minimum aeronautical experience is "
                 "150 hours if the applicant completed an integrated training course, or 200 hours if the applicant did not."
             )
+        if "10000" in query_lower or "10,000" in query_lower or "10 000" in query_lower:
+            if self._has_speed_limit_evidence(flattened):
+                return (
+                    f"{top_reference.citation}: the cited AIP text shows a 250KT IAS speed limitation below 10,000FT AMSL "
+                    "for the listed airspace or procedure, unless ATC authorises otherwise."
+                )
 
         sentence = self._extract_operational_sentence(flattened)
         return f"{top_reference.citation}: {sentence}"
@@ -1606,6 +1615,12 @@ class SearchService:
                 "In plain English: for an aeroplane CPL, the minimum hour total depends on the training pathway. "
                 "Use 150 hours under CASR 61.590 if the applicant completed an integrated training course, or 200 hours under CASR 61.610 if the applicant did not."
             )
+        if "10000" in query_lower or "10,000" in query_lower or "10 000" in query_lower:
+            if self._has_speed_limit_evidence(flattened):
+                return (
+                    "In plain English: use 250KT IAS as the speed limit below 10,000FT AMSL where the cited AIP airspace or procedure applies, "
+                    "unless ATC cancels or varies the limit."
+                )
         category = self._extract_aircraft_category(query)
         if self._query_targets_circling_minima(query) and category:
             circling = self._extract_circling_radius_data(flattened, category)
@@ -1661,6 +1676,12 @@ class SearchService:
                 "If the student completed an integrated course, use CASR 61.590 and plan against 150 hours. "
                 "If the student did not complete an integrated course, use CASR 61.610 and plan against 200 hours."
             )
+        if "10000" in query_lower or "10,000" in query_lower or "10 000" in query_lower:
+            if self._has_speed_limit_evidence(flattened):
+                return (
+                    "Example: a pilot planning to operate in airspace covered by the cited AIP table or procedure keeps the aircraft at or below 250KT IAS until leaving 10,000FT AMSL, "
+                    "unless ATC issues a different instruction."
+                )
         category = self._extract_aircraft_category(query)
         if self._query_targets_circling_minima(query) and category:
             circling = self._extract_circling_radius_data(flattened, category)
@@ -2356,6 +2377,41 @@ class SearchService:
                 score += 0.35
             if re.search(r"\.{5,}", item.text):
                 score -= 0.35
+            scored.append((score, item))
+
+        ordered = [item for _, item in sorted(scored, key=lambda pair: pair[0], reverse=True)]
+        unique: list[ReferenceItem] = []
+        seen: set[str] = set()
+        for item in ordered:
+            key = item.citation.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(item)
+            if len(unique) >= top_k:
+                break
+        return unique
+
+    def _prioritize_speed_limit_references(self, references: list[ReferenceItem], top_k: int) -> list[ReferenceItem]:
+        if not references:
+            return []
+
+        scored: list[tuple[float, ReferenceItem]] = []
+        for item in references:
+            text = f"{item.citation} {item.title} {item.text}".lower()
+            score = float(item.score)
+            if item.citation == "AIP ENR 1.4 - 13 subsection 4.1":
+                score += 2.6
+            if "airspace speed limitation" in text:
+                score += 0.8
+            if self._has_speed_limit_evidence(text):
+                score += 0.6
+            if "pilots must comply with airspace speed limitation" in text:
+                score += 0.5
+            if "ultralight" in text or "rotorcraft" in text:
+                score -= 0.9
+            if item.regulation_type.upper() != "AIP":
+                score -= 1.2
             scored.append((score, item))
 
         ordered = [item for _, item in sorted(scored, key=lambda pair: pair[0], reverse=True)]

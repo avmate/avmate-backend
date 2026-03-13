@@ -493,6 +493,19 @@ Additional notes unrelated to special alternate minima.
         self.assertIn("CASR 61.590", answer)
         self.assertIn("CASR 61.610", answer)
 
+    def test_build_answer_for_speed_limit_uses_250kt_summary(self) -> None:
+        refs = [
+            _reference(
+                "AIP ENR 1.4 - 13 subsection 4.1",
+                text="4.1 The table shows 250KT IAS below 10,000FT AMSL in the applicable airspace. Pilots must comply with airspace speed limitation unless specifically cancelled by ATC.",
+                regulation_type="AIP",
+                score=0.93,
+            ),
+        ]
+        answer = self.service._build_answer("Speed limit below 10,000ft", refs[0], refs)
+        self.assertIn("250KT IAS", answer)
+        self.assertIn("10,000FT AMSL", answer)
+
     def test_intent_seed_references_for_passenger_recency_prefers_casr_61_395(self) -> None:
         service = SearchService(
             embeddings=None,
@@ -606,6 +619,22 @@ Additional notes unrelated to special alternate minima.
         ]
         ranked = self.service._prioritize_cpl_references(refs, top_k=5)
         self.assertIn(ranked[0].citation, {"CASR 61.590", "CASR 61.610"})
+
+    def test_prioritize_speed_limit_references_prefers_airspace_limit_table(self) -> None:
+        refs = [
+            _reference(
+                "AIP ENR 1.1 - 65 subsection 9.12.2",
+                text="9.12.2 Faster larger aircraft - prior to arriving in the circuit and when below 10,000FT - can be at speeds up to 250KT.",
+                score=0.94,
+            ),
+            _reference(
+                "AIP ENR 1.4 - 13 subsection 4.1",
+                text="4.1 Pilots must comply with airspace speed limitation. 250KT IAS below 10,000FT AMSL applies in the listed airspace.",
+                score=0.9,
+            ),
+        ]
+        ranked = self.service._prioritize_speed_limit_references(refs, top_k=5)
+        self.assertEqual(ranked[0].citation, "AIP ENR 1.4 - 13 subsection 4.1")
 
     def test_prioritize_fuel_requirement_references_promotes_casr_91_455_over_rotorcraft(self) -> None:
         profile = self.service._build_query_profile(
