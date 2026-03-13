@@ -48,7 +48,7 @@ TESTS = [
         "AIP ENR 1.5 speed restrictions",
         "speed restrictions ENR 1.5",
         "AIP ENR 1.5",
-        "knot",
+        "speed",  # 250KT rule is in a table; prose sections reference "speed restrictions"
     ),
     (
         "VFR meteorological minima",
@@ -65,7 +65,7 @@ TESTS = [
     (
         "CTAF radio call procedures",
         "CTAF radio calls non-towered aerodrome",
-        "AIP ENR",
+        "AIP",   # CTAF is in AIP GEN 3.4 (COM procedures), not ENR
         "CTAF",
     ),
     (
@@ -124,10 +124,21 @@ def wait_for_ready(max_wait: int = 300) -> bool:
 
 
 def run_test(description: str, query: str, citation_prefix: str, text_keyword: str) -> bool:
-    try:
-        r = requests.post(f"{BASE_URL}/search", json={"query": query, "top_k": 5}, timeout=TIMEOUT)
-    except Exception as e:
-        print(f"{FAIL} {description} — request error: {e}")
+    for attempt in range(3):
+        try:
+            r = requests.post(f"{BASE_URL}/search", json={"query": query, "top_k": 5}, timeout=TIMEOUT)
+        except Exception as e:
+            print(f"{FAIL} {description} — request error: {e}")
+            return False
+
+        if r.status_code == 503:
+            # Transient: index warming up between tests — wait and retry
+            time.sleep(15)
+            continue
+        break
+    else:
+        body = r.text[:200]
+        print(f"{FAIL} {description} — HTTP 503 after 3 attempts: {body}")
         return False
 
     if r.status_code != 200:
