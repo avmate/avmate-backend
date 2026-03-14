@@ -30,7 +30,10 @@ ENR_SUBSECTION_QUERY_PATTERN = re.compile(
 TABLE_PATTERN = re.compile(r"\bTable\s+\d+(?:\.\d+)+\b", re.IGNORECASE)
 PAGE_PATTERN = re.compile(r"\b(?:GEN|ENR|AD|AIP)\s+\d+(?:\.\d+)?\s*-\s*\(?\d+\)?\b", re.IGNORECASE)
 AIP_SUBSECTION_PATTERN = re.compile(
-    r"(?m)^(?P<label>\d+(?:\.\d+){0,4})\.?\s+(?P<heading>[A-Za-z][^\n]{0,220})$"
+    r"(?m)^(?P<label>(?:\d+(?:\.\d+){1,4}|\d+\.))\s+(?P<heading>[A-Za-z][^\n]{0,220})$"
+)
+AIP_DEFINITION_ENTRY_PATTERN = re.compile(
+    r"(?m)^(?P<term>[A-Z][A-Za-z0-9/&().,'+\- ]{1,120}?):\s+"
 )
 LEGISLATION_HEADING_PATTERN = re.compile(
     r"(?m)^(?P<label>\d{1,3}(?:\.\d{1,3}){0,4}[A-Za-z]?(?:\([0-9A-Za-z]+\))?)\s+"
@@ -101,7 +104,7 @@ def extract_citations(text: str) -> list[str]:
     # e.g. "ENR 1.5 subsection 6.2" → "AIP ENR 1.5 6.2"
     for match in ENR_SUBSECTION_QUERY_PATTERN.finditer(text):
         chapter = " ".join(match.group("chapter").split())
-        label = match.group("label")
+        label = match.group("label").rstrip(".")
         # Reuse _build_aip_citation by constructing a synthetic page_ref
         citation = _build_aip_citation(label, f"{chapter} - 0")
         if citation not in citations:
@@ -285,7 +288,7 @@ def _split_aip_sections(text: str) -> list[dict]:
         end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
         section_text = text[start:end].strip()
         if not _looks_like_toc_block(section_text):
-            label_to_text[match.group("label")] = section_text
+            label_to_text[match.group("label").rstrip(".")] = section_text
 
     raw: list[dict] = []
     for index, match in enumerate(matches):
@@ -299,7 +302,7 @@ def _split_aip_sections(text: str) -> list[dict]:
         if _looks_like_toc_block(section_text):
             continue
 
-        label = match.group("label")
+        label = match.group("label").rstrip(".")
         if len(section_text) < 200:
             # Parent stub: include only if it has children (so citation lookup works),
             # but keep the original short text — don't aggregate child text, which would
@@ -336,7 +339,88 @@ def _split_aip_sections(text: str) -> list[dict]:
         elif len(section["text"]) > len(best[citation]["text"]):
             best[citation] = section
 
-    return [best[c] for c in order]
+    sections = [best[c] for c in order]
+    expanded: list[dict] = []
+    for section in sections:
+        expanded.append(section)
+        expanded.extend(_synthesize_aip_definition_entries(section))
+    return expanded
+
+
+def _synthesize_aip_definition_entries(section: dict) -> list[dict]:
+    """Split long AIP definition blocks into searchable child entries.
+
+    GEN 2.2 definitions are published under a single top-level heading, which makes
+    lexical retrieval too broad. Keep the official parent section, and add child
+    sections that retain the same citation but use entry-specific titles/text.
+    """
+    if section.get("citation") != "AIP GEN 2.2 1":
+        return []
+
+    text = section.get("text", "")
+    matches = list(AIP_DEFINITION_ENTRY_PATTERN.finditer(text))
+    if len(matches) < 5:
+        return []
+
+    child_sections: list[dict] = []
+    for index, match in enumerate(matches):
+        term = " ".join(match.group("term").split()).strip(" .:-")
+        if not _looks_like_aip_definition_term(term):
+            continue
+        start = match.start()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        entry_text = _clean_aip_entry_text(text[start:end])
+        if len(entry_text) < 80:
+            continue
+
+        child_sections.append(
+            {
+                "regulation_id": f"{section['citation']}::{_slugify(term)}",
+                "citation": section["citation"],
+                "title": f"{section['citation']} {term}"[:160],
+                "part": section.get("part", ""),
+                "section_label": f"{section.get('section_label', '')}::{term}",
+                "page_ref": extract_page_ref(entry_text, full_text=text, section_start=start),
+                "table_ref": "",
+                "text": entry_text,
+            }
+        )
+
+    return child_sections
+
+
+def _clean_aip_entry_text(text: str) -> str:
+    cleaned_lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if re.fullmatch(r"\d{1,3}", stripped):
+            continue
+        if re.match(r"^(?:GEN|ENR|AD)\s+\d+(?:\.\d+)?\s*-\s*\(?\d+\)?.*AIP Australia$", stripped):
+            continue
+        if re.match(r"^AIP Australia .*?(?:GEN|ENR|AD)\s+\d+(?:\.\d+)?\s*-\s*\(?\d+\)?$", stripped):
+            continue
+        cleaned_lines.append(stripped)
+    return "\n".join(cleaned_lines).strip()
+
+
+def _looks_like_aip_definition_term(term: str) -> bool:
+    normalized = " ".join(term.split()).strip().lower()
+    if not normalized or normalized in {"note", "notes"}:
+        return False
+    if re.fullmatch(r"note(?:\s+\d+)?", normalized):
+        return False
+    if len(normalized.split()) > 8:
+        return False
+    if any(token in normalized for token in (" are ", " is ", " means ", " must ")):
+        return False
+    return True
+
+
+def _slugify(value: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", value).strip("_").lower()
+    return slug or "entry"
 
 
 def _looks_like_mos_schedule_heading(label: str, heading: str) -> bool:

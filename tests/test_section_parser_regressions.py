@@ -187,6 +187,40 @@ and air traffic service phraseology so the block is long enough to be treated as
         self.assertIn("AIP GEN 2.2 1", citations)
         self.assertIn("AIP GEN 2.2 2", citations)
 
+    def test_split_into_sections_synthesizes_gen22_definition_entries(self) -> None:
+        text = """
+AIP Australia
+GEN 2.2 - 1
+GEN 2.2 DEFINITIONS AND ABBREVIATIONS
+1. DEFINITIONS
+Aerodrome: An area of land or water used for the arrival, departure and movement of aircraft, including
+associated buildings, installations and equipment, where the area is intended for use wholly or partly
+for the arrival, departure and movement of aircraft.
+Aerodrome Beacon: An aeronautical beacon used to indicate the location of an aerodrome from the air.
+Aerodrome Control Service: Air traffic control service for aerodrome traffic and aircraft in the circuit.
+Aerodrome Elevation: The elevation of the highest point of the landing area.
+Aerodrome Reference Point: The designated geographical location of an aerodrome.
+125
+GEN 2.2 - 2 27 NOV 2025 AIP Australia
+Aerodrome Traffic: All traffic on the manoeuvring area of an aerodrome and all aircraft flying in,
+entering, or leaving the traffic circuit.
+
+2. GENERAL AND METEOROLOGICAL ABBREVIATIONS
+ABN Aerodrome beacon.
+ACC Area control centre.
+        """.strip()
+
+        sections = split_into_sections(text, regulation_type="AIP")
+        titles = [section["title"] for section in sections]
+        citations = [section["citation"] for section in sections]
+
+        self.assertIn("AIP GEN 2.2 1 Aerodrome", titles)
+        self.assertIn("AIP GEN 2.2 1 Aerodrome Beacon", titles)
+        self.assertIn("AIP GEN 2.2 1 Aerodrome Traffic", titles)
+        self.assertNotIn("AIP GEN 2.2 125", citations)
+        self.assertNotIn("AIP GEN 2.2 1 Note", titles)
+        self.assertFalse(any(title.startswith("AIP GEN 2.2 1 Note ") for title in titles))
+
     def test_split_into_sections_parses_part61_mos_schedule_units(self) -> None:
         text = """
 Schedule 2 Part 61 Manual of Standards
