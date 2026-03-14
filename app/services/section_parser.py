@@ -253,6 +253,18 @@ def _split_aip_sections(text: str) -> list[dict]:
     if not matches:
         return []
 
+    # Pre-build label → section_text map for child aggregation.
+    # Only include real sections (not TOC entries or TOC blocks).
+    label_to_text: dict[str, str] = {}
+    for index, match in enumerate(matches):
+        if "....." in match.group("heading"):
+            continue
+        start = match.start()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        section_text = text[start:end].strip()
+        if not _looks_like_toc_block(section_text):
+            label_to_text[match.group("label")] = section_text
+
     raw: list[dict] = []
     for index, match in enumerate(matches):
         # Skip TOC entries: headings with dot-leaders like "1.18 Speed Restrictions...ENR 1.5-18"
@@ -262,12 +274,18 @@ def _split_aip_sections(text: str) -> list[dict]:
         start = match.start()
         end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
         section_text = text[start:end].strip()
-        if len(section_text) < 200:
-            continue
         if _looks_like_toc_block(section_text):
             continue
 
         label = match.group("label")
+        if len(section_text) < 200:
+            # Parent stub: synthesize by aggregating immediate children's text.
+            child_prefix = label + "."
+            child_texts = [t for lbl, t in label_to_text.items() if lbl.startswith(child_prefix)]
+            if not child_texts:
+                continue
+            section_text = section_text + "\n\n" + "\n\n".join(child_texts)
+
         heading = " ".join(match.group("heading").split()).strip(" .:-")
         page_ref = extract_page_ref(section_text, full_text=text, section_start=start)
         citation = _build_aip_citation(label, page_ref)
