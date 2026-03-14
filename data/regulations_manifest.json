@@ -58,5 +58,40 @@
     "path": "Regulation files/Manuals/flight_examiner_handbook.pdf",
     "type": "Manuals",
     "title": "Flight Examiner Handbook"
+  },
+  {
+    "path": "Regulation files/MOS/Part_61_Manual_of_Standards_(MOS)_1.pdf",
+    "type": "MOS",
+    "title": "Part 61 MOS - Flight Crew Licensing (Part 1)"
+  },
+  {
+    "path": "Regulation files/MOS/Part_61_Manual_of_Standards_(MOS)_2.pdf",
+    "type": "MOS",
+    "title": "Part 61 MOS - Flight Crew Licensing (Part 2)"
+  },
+  {
+    "path": "Regulation files/MOS/Part_61_Manual_of_Standards_(MOS)_3.pdf",
+    "type": "MOS",
+    "title": "Part 61 MOS - Flight Crew Licensing (Part 3)"
+  },
+  {
+    "path": "Regulation files/MOS/Part_61_Manual_of_Standards_(MOS)_4.pdf",
+    "type": "MOS",
+    "title": "Part 61 MOS - Flight Crew Licensing (Part 4)"
+  },
+  {
+    "path": "Regulation files/MOS/Part_91_(General_Operating_and_Flight_Rules)_Manual_of_Standards_2020.pdf",
+    "type": "MOS",
+    "title": "Part 91 MOS - General Operating and Flight Rules"
+  },
+  {
+    "path": "Regulation files/MOS/Part_139_(Aerodromes)_Manual_of_Standards_2019_(as_amended).pdf",
+    "type": "MOS",
+    "title": "Part 139 MOS - Aerodromes"
+  },
+  {
+    "path": "Regulation files/MOS/Part_145_Manual_of_Standards_(MOS)_(as amended).pdf",
+    "type": "MOS",
+    "title": "Part 145 MOS - Approved Maintenance Organisations"
   }
 ]
