@@ -91,7 +91,7 @@ TEST_CASES = [
     ExpectedQuery(
         query="VFR visibility and cloud clearance requirements in class G airspace",
         expected_citation="MOS 2.07",
-        expected_phrase="clear of cloud",
+        expected_phrase="distance from cloud",
     ),
     ExpectedQuery(
         query="CTAF procedures non-towered aerodrome radio calls",

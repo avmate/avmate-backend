@@ -273,7 +273,7 @@ class SearchServiceRegressionTests(unittest.TestCase):
         vmc = _section(
             "sec-vmc",
             "MOS 2.07",
-            text="In Class G at or below 5,000 ft AMSL, aircraft must be clear of cloud and in sight of ground or water.",
+            text="VMC criteria means meteorological conditions expressed in terms of the flight visibility and distance from cloud (horizontal and vertical).",
             regulation_type="MOS",
         )
         rule = _section(
