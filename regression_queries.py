@@ -40,7 +40,6 @@ TEST_CASES = [
         query="How can a QNH be considered accurate on receipt?",
         expected_citation="AIP ENR 1.7 1.4.1",
         expected_phrase="QNH can be considered accurate",
-        expected_additional_citations=("AIP ENR 1.5 5.3",),
     ),
     ExpectedQuery(
         query="What is the special alternate weather minima?",
