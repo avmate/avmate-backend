@@ -308,6 +308,124 @@ class SearchServiceRegressionTests(unittest.TestCase):
         self.assertEqual(response.references[0].citation, "MOS 2.07")
         self.assertEqual(vector_store.calls[0]["where"], {"regulation_type": {"$eq": "MOS"}})
 
+    def test_search_routes_flight_review_query_to_casr_61_745(self) -> None:
+        flight_review = _section(
+            "sec-flight-review",
+            "CASR 61.745",
+            text="Limitations on exercise of privileges of aircraft class ratings—flight review.",
+            regulation_type="CASR",
+        )
+        unrelated = _section(
+            "sec-balloon",
+            "CASR 101.135",
+            text="What to do if tethered balloon escapes from its mooring.",
+            regulation_type="CASR",
+        )
+        vector_store = _FakeVectorStore(
+            [{"metadatas": [[{"section_id": "sec-balloon"}]], "distances": [[0.02]]}]
+        )
+        service = SearchService(
+            embeddings=_FakeEmbeddings(),
+            vector_store=vector_store,
+            canonical_store=_FakeCanonicalStore(
+                sections=[flight_review, unrelated],
+                exact_prefix_map={"CASR 61.745": ["sec-flight-review"]},
+            ),
+        )
+
+        response = service.search("What is a flight review and when is it required?", top_k=3)
+
+        self.assertEqual(response.references[0].citation, "CASR 61.745")
+        self.assertEqual(vector_store.calls[0]["where"], {"regulation_type": {"$eq": "CASR"}})
+
+    def test_search_routes_instrument_currency_query_to_casr_61_870(self) -> None:
+        recency = _section(
+            "sec-ifr-recency",
+            "CASR 61.870",
+            text="Limitations on exercise of privileges of instrument ratings—recent experience: general.",
+            regulation_type="CASR",
+        )
+        customs = _section(
+            "sec-customs",
+            "AIP GEN 1.3 4.2.5",
+            text="All persons entering Australia who are in possession of Australian currency, foreign currency.",
+            regulation_type="AIP",
+        )
+        vector_store = _FakeVectorStore(
+            [{"metadatas": [[{"section_id": "sec-customs"}]], "distances": [[0.01]]}]
+        )
+        service = SearchService(
+            embeddings=_FakeEmbeddings(),
+            vector_store=vector_store,
+            canonical_store=_FakeCanonicalStore(
+                sections=[recency, customs],
+                exact_prefix_map={"CASR 61.870": ["sec-ifr-recency"]},
+            ),
+        )
+
+        response = service.search("What are the instrument currency requirements?", top_k=3)
+
+        self.assertEqual(response.references[0].citation, "CASR 61.870")
+        self.assertEqual(vector_store.calls[0]["where"], {"regulation_type": {"$eq": "CASR"}})
+
+    def test_search_routes_passenger_briefing_query_to_casr_91_565(self) -> None:
+        ga_briefing = _section(
+            "sec-ga-briefing",
+            "CASR 91.565",
+            text="The pilot in command must brief passengers on safety before departure.",
+            regulation_type="CASR",
+        )
+        air_transport = _section(
+            "sec-airtransport",
+            "CASR 133.235",
+            text="Safety briefing cards for rotorcraft operators.",
+            regulation_type="CASR",
+        )
+        vector_store = _FakeVectorStore(
+            [{"metadatas": [[{"section_id": "sec-airtransport"}]], "distances": [[0.02]]}]
+        )
+        service = SearchService(
+            embeddings=_FakeEmbeddings(),
+            vector_store=vector_store,
+            canonical_store=_FakeCanonicalStore(
+                sections=[ga_briefing, air_transport],
+                exact_prefix_map={"CASR 91.565": ["sec-ga-briefing"]},
+            ),
+        )
+
+        response = service.search("What are the requirements for a passenger safety briefing?", top_k=3)
+
+        self.assertEqual(response.references[0].citation, "CASR 91.565")
+
+    def test_search_routes_mel_query_to_casr_91_925(self) -> None:
+        mel = _section(
+            "sec-mel",
+            "CASR 91.925",
+            text="Definitions: master minimum equipment list or MMEL, for a type of aircraft.",
+            regulation_type="CASR",
+        )
+        unrelated = _section(
+            "sec-ratings",
+            "CASR 10.3",
+            text="CASR Part 61 Rating Comments Command Instrument Rating.",
+            regulation_type="CASR",
+        )
+        vector_store = _FakeVectorStore(
+            [{"metadatas": [[{"section_id": "sec-ratings"}]], "distances": [[0.02]]}]
+        )
+        service = SearchService(
+            embeddings=_FakeEmbeddings(),
+            vector_store=vector_store,
+            canonical_store=_FakeCanonicalStore(
+                sections=[mel, unrelated],
+                exact_prefix_map={"CASR 91.925": ["sec-mel"]},
+            ),
+        )
+
+        response = service.search("Can a pilot fly with an inoperative instrument?", top_k=3)
+
+        self.assertEqual(response.references[0].citation, "CASR 91.925")
+
     def test_search_deduplicates_citation_list_when_multiple_refs_share_official_citation(self) -> None:
         glossary_term = _section(
             "sec-arp",

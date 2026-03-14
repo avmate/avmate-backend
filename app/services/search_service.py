@@ -303,6 +303,74 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
             "preferred_citations": ["MOS 2.07", "CASR 91.280"],
         }
 
+    # Flight review / biennial flight review / proficiency check → CASR 61.745
+    if any(term in normalized for term in ("flight review", "biennial flight review", "proficiency check")):
+        return {
+            "regulation_hint": "CASR",
+            "search_text": (
+                "CASR 61.745 limitations exercise privileges aircraft class rating "
+                "flight review biennial check CASR 61.126"
+            ),
+            "preferred_citations": ["CASR 61.745", "CASR 61.126"],
+        }
+
+    # Instrument recency / IFR currency — "currency" alone hits financial-currency text in AIP GEN 1.3
+    if any(
+        term in normalized
+        for term in (
+            "instrument currency",
+            "ifr currency",
+            "instrument recency",
+            "iir recency",
+            "recent instrument experience",
+            "instrument recent experience",
+        )
+    ):
+        return {
+            "regulation_hint": "CASR",
+            "search_text": (
+                "CASR 61.870 limitations exercise privileges instrument rating recent experience "
+                "IFR recency single pilot CASR 61.875"
+            ),
+            "preferred_citations": ["CASR 61.870", "CASR 61.875"],
+        }
+
+    # Passenger safety briefing — GA rule is CASR 91.565, not CASR 121/133/135 (air transport)
+    if any(
+        term in normalized
+        for term in ("passenger safety briefing", "passenger briefing", "pre-flight briefing passengers")
+    ):
+        return {
+            "regulation_hint": "CASR",
+            "search_text": (
+                "CASR 91.565 passengers safety briefings instructions pilot in command "
+                "pre-flight passenger briefing requirements"
+            ),
+            "preferred_citations": ["CASR 91.565"],
+        }
+
+    # MEL / minimum equipment list / inoperative instruments → CASR 91.925
+    if any(
+        term in normalized
+        for term in (
+            "minimum equipment list",
+            "mel ",
+            " mel",
+            "inoperative instrument",
+            "inoperative equipment",
+            "fly with inoperative",
+            "operate with inoperative",
+        )
+    ):
+        return {
+            "regulation_hint": "CASR",
+            "search_text": (
+                "CASR 91.925 minimum equipment list MEL master minimum equipment list "
+                "inoperative aircraft instrument"
+            ),
+            "preferred_citations": ["CASR 91.925", "CASR 91.930"],
+        }
+
     return None
 
 
