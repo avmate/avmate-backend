@@ -299,7 +299,7 @@ def _collect_prefix_candidates(
     for index, citation in enumerate(citations):
         score = max(0.95, 0.99 - (index * 0.01))
         for sec in canonical_store.get_sections_by_citation_prefix(citation):
-            if sec["section_id"] not in seen_ids:
+            if _is_candidate_family_consistent(sec) and sec["section_id"] not in seen_ids:
                 candidates.append((score, sec))
                 seen_ids.add(sec["section_id"])
     return candidates
@@ -481,18 +481,18 @@ def _route_explicit_citation_query(query: str, citations: list[str]) -> dict[str
         family = _detect_family(citation)
         if not family:
             continue
+        if family == "CASR" and re.fullmatch(r"CASR\s+1998", citation, re.IGNORECASE):
+            return {
+                "regulation_hint": "CASR",
+                "search_text": "Civil Aviation Safety Regulations 1998 commencement definitions applicability",
+                "preferred_citations": ["CASR 1."],
+            }
         broad_prefix = _extract_broad_prefix(citation)
         if broad_prefix:
             return {
                 "regulation_hint": family,
                 "search_text": f"{citation} {' '.join(normalized_query.split()[:12])}",
                 "preferred_citations": [broad_prefix],
-            }
-        if family == "CASR" and re.fullmatch(r"CASR\s+1998", citation, re.IGNORECASE):
-            return {
-                "regulation_hint": "CASR",
-                "search_text": "Civil Aviation Safety Regulations 1998 commencement definitions applicability",
-                "preferred_citations": ["CASR 1."],
             }
     return None
 
@@ -553,6 +553,8 @@ def _extract_broad_prefix(citation: str) -> str:
     if len(parts) < 2:
         return ""
     family, token = parts[0].upper(), parts[1]
+    if family == "CASR" and token == "1998":
+        return ""
     if family in {"CASR", "MOS"} and re.fullmatch(r"\d+(?:\.)?", token):
         return f"{family} {token.rstrip('.') }."
     if family == "CAR" and re.fullmatch(r"\d+(?:\.)?", token):
