@@ -308,6 +308,39 @@ class SearchServiceRegressionTests(unittest.TestCase):
         self.assertEqual(response.references[0].citation, "MOS 2.07")
         self.assertEqual(vector_store.calls[0]["where"], {"regulation_type": {"$eq": "MOS"}})
 
+    def test_search_deduplicates_citation_list_when_multiple_refs_share_official_citation(self) -> None:
+        glossary_term = _section(
+            "sec-arp",
+            "AIP GEN 2.2 1",
+            text="Aerodrome Reference Point (ARP): The designated geographical location of an aerodrome.",
+            title="AIP GEN 2.2 1 Aerodrome Reference Point (ARP)",
+            regulation_type="AIP",
+        )
+        glossary_term_2 = _section(
+            "sec-aerodrome",
+            "AIP GEN 2.2 1",
+            text="Aerodrome: An area of land or water used for the arrival, departure and movement of aircraft.",
+            title="AIP GEN 2.2 1 Aerodrome",
+            regulation_type="AIP",
+        )
+        service = SearchService(
+            embeddings=_FakeEmbeddings(),
+            vector_store=_FakeVectorStore(
+                [
+                    {
+                        "metadatas": [[{"section_id": "sec-arp"}, {"section_id": "sec-aerodrome"}]],
+                        "distances": [[0.02, 0.04]],
+                    }
+                ]
+            ),
+            canonical_store=_FakeCanonicalStore(sections=[glossary_term, glossary_term_2]),
+        )
+
+        response = service.search("What is an aerodrome reference point?", top_k=5)
+
+        self.assertEqual(response.references[0].title, "AIP GEN 2.2 1 Aerodrome Reference Point (ARP)")
+        self.assertEqual(response.citations, ["AIP GEN 2.2 1"])
+
 
 if __name__ == "__main__":
     unittest.main()

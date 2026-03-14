@@ -14,7 +14,7 @@ Retrieval flow (per query):
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Iterable
 
 from app.schemas import ReferenceItem, SearchResponse
 from app.services.canonical_store import CanonicalStore
@@ -209,7 +209,7 @@ class SearchService:
         top = references[0]
         return SearchResponse(
             references=references,
-            citations=[r.citation for r in references],
+            citations=_unique_preserve_order(r.citation for r in references),
             verbatim_text=" ".join(top.text.split())[:600],
             contextual_notes=[],
             confidence=85 if (self._llm and self._enable_llm_answers) else 50,
@@ -369,6 +369,16 @@ def _section_to_ref(score: float, sec: dict) -> ReferenceItem:
         chunk_index=0,
         score=round(score, 4),
     )
+
+
+def _unique_preserve_order(values: Iterable[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value not in seen:
+            result.append(value)
+            seen.add(value)
+    return result
 
 
 def _build_fallback(query: str, references: list[ReferenceItem]) -> dict:
