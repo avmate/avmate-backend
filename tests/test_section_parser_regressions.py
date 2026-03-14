@@ -160,6 +160,82 @@ pointer.
         self.assertIn("operative", sections[0]["text"])
         self.assertIn("rule text", sections[0]["text"])
 
+    def test_split_into_sections_parses_aip_top_level_numbered_headings(self) -> None:
+        text = """
+AIP Australia
+GEN 2.2 - 1
+GEN 2.2 DEFINITIONS AND ABBREVIATIONS
+1. DEFINITIONS
+Aerodrome: An area of land or water used for the arrival, departure and movement of aircraft, including
+associated buildings, installations and equipment, where the area is intended for use wholly or partly
+for the arrival, departure and movement of aircraft.
+Aerodrome Beacon: An aeronautical beacon used to indicate the location of an aerodrome from the air.
+Aerodrome Control Service: Air traffic control service for aerodrome traffic and aircraft in the circuit.
+
+2. GENERAL AND METEOROLOGICAL ABBREVIATIONS
+ABN Aerodrome beacon.
+ACC Area control centre.
+ATIS Automatic terminal information service.
+AWIS Aerodrome weather information service.
+The abbreviation list continues with standard operational terms used in weather reporting, navigation
+and air traffic service phraseology so the block is long enough to be treated as real content.
+        """.strip()
+
+        sections = split_into_sections(text, regulation_type="AIP")
+        citations = [section["citation"] for section in sections]
+
+        self.assertIn("AIP GEN 2.2 1", citations)
+        self.assertIn("AIP GEN 2.2 2", citations)
+
+    def test_split_into_sections_parses_part61_mos_schedule_units(self) -> None:
+        text = """
+Schedule 2 Part 61 Manual of Standards
+Competency standards
+
+A3 Control aeroplane in normal flight
+1 Unit description
+This unit describes the skills and knowledge required to control an aeroplane while performing normal flight manoeuvres.
+2 Elements and performance criteria
+2.1 A3.1 - Climb aeroplane
+(a) operate and monitor all aircraft systems when commencing a climbing flight manoeuvre.
+
+A4 Conduct approach and landing
+1 Unit description
+This unit describes the skills and knowledge required to conduct an approach and landing in an aeroplane.
+2 Elements and performance criteria
+2.1 A4.1 - Conduct a normal approach
+(a) configure the aeroplane and maintain the required flight path.
+        """.strip()
+
+        sections = split_into_sections(text, regulation_type="MOS")
+        citations = [section["citation"] for section in sections]
+
+        self.assertIn("MOS Schedule 2 A3", citations)
+        self.assertIn("MOS Schedule 2 A4", citations)
+
+    def test_split_into_sections_parses_part61_mos_schedule_appendices(self) -> None:
+        text = """
+Schedule 4 Part 61 Manual of Standards
+Aeronautical examinations
+
+APPENDIX 1.5 FLIGHT ENGINEER LICENCE
+Flight Engineer Licence Examination
+Examination Subject Pass Standard % Hours
+FENG Flight Engineer 70 2.0
+This appendix sets out the examination code, the subject and the pass standard for the flight engineer licence examination.
+
+APPENDIX 1.6 INSTRUMENT RATING
+Instrument Rating Examination
+The examination covers privileges, limitations and operational requirements.
+It also sets out the knowledge areas, pass standard and time limit for the instrument rating examination.
+        """.strip()
+
+        sections = split_into_sections(text, regulation_type="MOS")
+        citations = [section["citation"] for section in sections]
+
+        self.assertIn("MOS Schedule 4 FENG", citations)
+        self.assertIn("MOS Schedule 4 Appendix 1.6", citations)
+
     def test_chunk_chars_prefers_legal_boundaries_before_hard_split(self) -> None:
         text = (
             "6.2 Special Alternate Weather Minima\n\n"

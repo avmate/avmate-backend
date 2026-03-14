@@ -30,7 +30,7 @@ ENR_SUBSECTION_QUERY_PATTERN = re.compile(
 TABLE_PATTERN = re.compile(r"\bTable\s+\d+(?:\.\d+)+\b", re.IGNORECASE)
 PAGE_PATTERN = re.compile(r"\b(?:GEN|ENR|AD|AIP)\s+\d+(?:\.\d+)?\s*-\s*\(?\d+\)?\b", re.IGNORECASE)
 AIP_SUBSECTION_PATTERN = re.compile(
-    r"(?m)^(?P<label>\d+(?:\.\d+){1,4})\s+(?P<heading>[A-Za-z][^\n]{0,220})$"
+    r"(?m)^(?P<label>\d+(?:\.\d+){0,4})\.?\s+(?P<heading>[A-Za-z][^\n]{0,220})$"
 )
 LEGISLATION_HEADING_PATTERN = re.compile(
     r"(?m)^(?P<label>\d{1,3}(?:\.\d{1,3}){0,4}[A-Za-z]?(?:\([0-9A-Za-z]+\))?)\s+"
@@ -40,6 +40,14 @@ LEGISLATION_PREFIX_PATTERN = re.compile(r"\b(CASR|CAR|CAO|MOS|CAA)\b", re.IGNORE
 LEGISLATION_PAGE_NOISE_PATTERN = re.compile(
     r"(?:compilation\s+no\.|authorised\s+version|registered\s+\d{1,2}/\d{1,2}/\d{4})",
     re.IGNORECASE,
+)
+MOS_SCHEDULE_PATTERN = re.compile(r"\bSchedule\s+([0-9IVX]+)\s+Part\s+61\b", re.IGNORECASE)
+MOS_APPENDIX_HEADING_PATTERN = re.compile(
+    r"(?m)^(?P<kind>SECTION|APPENDIX)\s+(?P<label>[A-Z0-9.]+)\s*:?\s+(?P<heading>[A-Za-z][^\n]{2,220})$"
+)
+MOS_UNIT_HEADING_PATTERN = re.compile(
+    r"(?m)^(?P<label>(?:[A-Z]{2,5}|[A-Z]{1,4}\d+[A-Z]?|[A-Z]{1,4}-[A-Z0-9]{1,6}))\s+"
+    r"(?P<heading>[A-Za-z][^\n]{2,220})$"
 )
 
 
@@ -218,7 +226,21 @@ def split_into_sections(text: str, regulation_type: str = "") -> list[dict]:
         if aip_sections:
             return aip_sections
 
+    mos_schedule_sections: list[dict] = []
+    if regulation_type.upper() == "MOS":
+        mos_schedule_sections = _split_part61_mos_schedule_sections(text)
+
     legislation_sections = _split_legislation_sections(text, regulation_type)
+    if mos_schedule_sections and legislation_sections:
+        merged = list(mos_schedule_sections)
+        seen = {section["citation"] for section in merged}
+        for section in legislation_sections:
+            if section["citation"] not in seen:
+                merged.append(section)
+                seen.add(section["citation"])
+        return merged
+    if mos_schedule_sections:
+        return mos_schedule_sections
     if legislation_sections:
         return legislation_sections
 
@@ -315,6 +337,76 @@ def _split_aip_sections(text: str) -> list[dict]:
             best[citation] = section
 
     return [best[c] for c in order]
+
+
+def _looks_like_mos_schedule_heading(label: str, heading: str) -> bool:
+    if not heading or not re.search(r"[A-Za-z]{2,}", heading):
+        return False
+    label_upper = label.upper()
+    if label_upper in {"INDEX", "TABLE", "PAGE", "PART", "SCHEDULE"}:
+        return False
+    if "....." in heading:
+        return False
+    return True
+
+
+def _extract_mos_schedule_id(text: str) -> str:
+    match = MOS_SCHEDULE_PATTERN.search(text[:4000])
+    return match.group(1).upper() if match else ""
+
+
+def _split_part61_mos_schedule_sections(text: str) -> list[dict]:
+    schedule_id = _extract_mos_schedule_id(text)
+    if not schedule_id:
+        return []
+
+    matches: list[tuple[int, str, re.Match[str]]] = []
+    for match in MOS_APPENDIX_HEADING_PATTERN.finditer(text):
+        matches.append((match.start(), match.group("kind").upper(), match))
+    for match in MOS_UNIT_HEADING_PATTERN.finditer(text):
+        matches.append((match.start(), "UNIT", match))
+
+    if len(matches) < 2:
+        return []
+
+    matches.sort(key=lambda item: item[0])
+    sections: list[dict] = []
+    for index, (start, kind, match) in enumerate(matches):
+        label = match.group("label").strip()
+        heading = " ".join(match.group("heading").split()).strip(" .:-")
+        if not _looks_like_mos_schedule_heading(label, heading):
+            continue
+
+        end = matches[index + 1][0] if index + 1 < len(matches) else len(text)
+        section_text = text[start:end].strip()
+        if len(section_text) < 120:
+            continue
+        if _looks_like_toc_block(section_text):
+            continue
+
+        if kind == "APPENDIX":
+            citation = f"MOS Schedule {schedule_id} Appendix {label}"
+        elif kind == "SECTION":
+            citation = f"MOS Schedule {schedule_id} Section {label}"
+        else:
+            citation = f"MOS Schedule {schedule_id} {label}"
+        title = f"{citation} {heading}".strip()[:160]
+        sections.append(
+            {
+                "regulation_id": citation,
+                "citation": citation,
+                "title": title,
+                "part": infer_part(citation),
+                "section_label": label,
+                "page_ref": extract_page_ref(section_text, full_text=text, section_start=start),
+                "table_ref": extract_table_ref(section_text),
+                "text": section_text,
+            }
+        )
+
+    if len(sections) < 2:
+        return []
+    return sections
 
 
 def _infer_legislation_prefix(text: str, regulation_type: str) -> str:
