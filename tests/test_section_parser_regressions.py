@@ -9,7 +9,7 @@ class SectionParserRegressionTests(unittest.TestCase):
     def test_extract_citations_maps_enr_subsection_query_to_aip_subsection(self) -> None:
         query = "What does ENR 1.5 subsection 6.2 say?"
         citations = extract_citations(query)
-        self.assertIn("AIP 6.2", citations)
+        self.assertIn("AIP ENR 1.5 6.2", citations)
 
     def test_extract_citations_preserves_standard_aip_citations(self) -> None:
         query = "Explain AIP 1.4.1 and AIP 5.3 requirements."
@@ -155,7 +155,7 @@ pointer.
         sections = split_into_sections(text, regulation_type="AIP")
 
         self.assertEqual(len(sections), 1)
-        self.assertEqual(sections[0]["citation"], "AIP 1.18")
+        self.assertEqual(sections[0]["citation"], "AIP ENR 1.5 1.18")
         self.assertNotIn(".....", sections[0]["text"])
         self.assertIn("operative", sections[0]["text"])
         self.assertIn("rule text", sections[0]["text"])

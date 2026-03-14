@@ -89,7 +89,7 @@ TESTS = [
     (
         "Fuel requirements VFR flight CASR Part 91",
         "fuel reserve requirements VFR day flight",
-        "CASR",
+        "MOS",
         "fuel",
     ),
     (

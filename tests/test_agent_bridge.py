@@ -139,6 +139,28 @@ class AgentBridgeTests(unittest.TestCase):
             snapshot = service._build_workspace_snapshot(tmp_path / "missing")  # noqa: SLF001
             self.assertIn("workspace_status=missing", snapshot)
 
+    def test_repo_guidance_uses_real_repo_files_and_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            (tmp_path / "app" / "services").mkdir(parents=True)
+            (tmp_path / "tests").mkdir(parents=True)
+            (tmp_path / "app" / "services" / "search_service.py").write_text("", encoding="utf-8")
+            (tmp_path / "app" / "services" / "section_parser.py").write_text("", encoding="utf-8")
+            (tmp_path / "tests" / "test_search_service_regressions.py").write_text("", encoding="utf-8")
+            (tmp_path / "regression_queries.py").write_text("", encoding="utf-8")
+            (tmp_path / "regression_test.py").write_text("", encoding="utf-8")
+            (tmp_path / "indexer.py").write_text("", encoding="utf-8")
+
+            service = build_service(tmp_path)
+            guidance = service._build_repo_guidance(tmp_path)  # noqa: SLF001
+
+            self.assertIn("app/services/search_service.py", guidance)
+            self.assertIn("tests/test_search_service_regressions.py", guidance)
+            self.assertIn('python -m unittest discover -s tests -p "test_*.py" -v', guidance)
+            self.assertIn("python regression_queries.py", guidance)
+            self.assertIn("python indexer.py", guidance)
+            self.assertIn("Do not reference pytest unless the repo guidance lists it.", guidance)
+
 
 if __name__ == "__main__":
     unittest.main()

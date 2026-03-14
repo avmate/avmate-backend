@@ -79,7 +79,7 @@ TEST_CASES = [
     ),
     ExpectedQuery(
         query="minimum safe altitude low flying below 500 feet AGL",
-        expected_citation="CASR 91",
+        expected_citation="CASR 91.267",
         expected_phrase="500",
     ),
     # --- AIP table-driven operational queries ---
@@ -90,8 +90,8 @@ TEST_CASES = [
     ),
     ExpectedQuery(
         query="VFR visibility and cloud clearance requirements in class G airspace",
-        expected_citation="AIP ENR 1.4",  # VFR meteorological conditions table
-        expected_phrase="visibility",
+        expected_citation="MOS 2.07",
+        expected_phrase="clear of cloud",
     ),
     ExpectedQuery(
         query="CTAF procedures non-towered aerodrome radio calls",

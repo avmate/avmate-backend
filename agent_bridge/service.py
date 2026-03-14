@@ -172,6 +172,7 @@ class AgentBridgeService:
             user_message=user_message,
             include_workspace_snapshot=include_workspace_snapshot,
         )
+        repo_guidance = self._build_repo_guidance(Path(session.project_root))
         warnings: list[str] = []
 
         proposal_provider = self._resolve_provider(self._proposer_provider_name)
@@ -185,6 +186,7 @@ class AgentBridgeService:
         proposal_prompt = self._build_task_proposal_prompt(
             base_messages=base_messages,
             workspace_snapshot=workspace_snapshot,
+            repo_guidance=repo_guidance,
         )
         proposal_reply = proposal_provider.generate(
             system_prompt=(
@@ -206,6 +208,7 @@ class AgentBridgeService:
         review_prompt = self._build_task_review_prompt(
             user_message=transcript[-1].content,
             workspace_snapshot=workspace_snapshot,
+            repo_guidance=repo_guidance,
             proposal=proposal,
         )
         review_reply = reviewer_provider.generate(
@@ -228,6 +231,7 @@ class AgentBridgeService:
         execution_brief = self._merge_task_outputs(
             user_message=transcript[-1].content,
             workspace_snapshot=workspace_snapshot,
+            repo_guidance=repo_guidance,
             proposal=proposal,
             review=review,
             warnings=warnings,
@@ -364,6 +368,7 @@ class AgentBridgeService:
         *,
         user_message: str,
         workspace_snapshot: str | None,
+        repo_guidance: str,
         proposal: dict[str, Any],
         review: dict[str, Any],
         warnings: list[str],
@@ -372,6 +377,7 @@ class AgentBridgeService:
         prompt = self._build_task_merge_prompt(
             user_message=user_message,
             workspace_snapshot=workspace_snapshot,
+            repo_guidance=repo_guidance,
             proposal=proposal,
             review=review,
         )
@@ -383,7 +389,8 @@ class AgentBridgeService:
                 system_prompt=(
                     "You are producing the final execution brief for a coding task. "
                     "Use the proposal and review. Prefer the reviewed version of the plan. "
-                    "Output concise markdown with sections: Solution, Steps, Validation, Risks."
+                    "Output concise markdown with sections: Solution, Steps, Validation, Risks. "
+                    "Use plain English, minimal jargon, and only mention repo files that are actually in the repo guidance."
                 ),
                 messages=[{"role": "user", "content": prompt}],
             )
@@ -441,6 +448,7 @@ class AgentBridgeService:
         *,
         base_messages: list[dict[str, str]],
         workspace_snapshot: str | None,
+        repo_guidance: str,
     ) -> str:
         transcript_text = "\n\n".join(
             f"{item['role']}: {item['content']}" for item in base_messages[-self._conversation_window :]
@@ -448,8 +456,13 @@ class AgentBridgeService:
         parts = [
             "Build an execution plan for the latest user request.",
             f"Conversation:\n{transcript_text}",
+            f"Repo guidance:\n{repo_guidance}",
             f"Return valid JSON with this schema:\n{json.dumps(TASK_PROPOSAL_SCHEMA, ensure_ascii=True)}",
-            "Constraints: steps must be concrete, commands should be real shell commands when needed, and tests must be specific.",
+            (
+                "Constraints: steps must be concrete, commands should be real shell commands when needed, "
+                "tests must be specific, and you must not reference files or commands that are not in the repo guidance "
+                "unless you explicitly mark them as new."
+            ),
         ]
         if workspace_snapshot:
             parts.insert(2, f"Workspace snapshot:\n{workspace_snapshot}")
@@ -460,13 +473,18 @@ class AgentBridgeService:
         *,
         user_message: str,
         workspace_snapshot: str | None,
+        repo_guidance: str,
         proposal: dict[str, Any],
     ) -> str:
         parts = [
             f"User request:\n{user_message}",
+            f"Repo guidance:\n{repo_guidance}",
             f"Proposed plan JSON:\n{json.dumps(proposal, ensure_ascii=True, indent=2)}",
             f"Return valid JSON with this schema:\n{json.dumps(TASK_REVIEW_SCHEMA, ensure_ascii=True)}",
-            "Constraints: set verdict to approve only if the plan is safe, testable, and specific enough to execute.",
+            (
+                "Constraints: set verdict to approve only if the plan is safe, testable, specific enough to execute, "
+                "and uses only repo files and commands from the repo guidance unless a new file is explicitly proposed."
+            ),
         ]
         if workspace_snapshot:
             parts.insert(1, f"Workspace snapshot:\n{workspace_snapshot}")
@@ -477,18 +495,20 @@ class AgentBridgeService:
         *,
         user_message: str,
         workspace_snapshot: str | None,
+        repo_guidance: str,
         proposal: dict[str, Any],
         review: dict[str, Any],
     ) -> str:
         parts = [
             f"User request:\n{user_message}",
+            f"Repo guidance:\n{repo_guidance}",
             f"Proposal JSON:\n{json.dumps(proposal, ensure_ascii=True, indent=2)}",
             f"Review JSON:\n{json.dumps(review, ensure_ascii=True, indent=2)}",
         ]
         if workspace_snapshot:
             parts.insert(1, f"Workspace snapshot:\n{workspace_snapshot}")
         parts.append(
-            "Write the final execution brief. Prefer the reviewed plan and include only steps that are safe and testable."
+            "Write the final execution brief. Prefer the reviewed plan and include only steps that are safe, testable, and grounded in the repo guidance. Use plain English."
         )
         return "\n\n".join(parts)
 
@@ -526,6 +546,55 @@ class AgentBridgeService:
             lines.append("recent_commits:")
             lines.extend(recent.splitlines())
 
+        return "\n".join(lines)
+
+    def _build_repo_guidance(self, project_root: Path) -> str:
+        if not project_root.exists():
+            return "repo_status=missing"
+
+        def rel_paths(pattern: str) -> list[str]:
+            return sorted(
+                str(path.relative_to(project_root)).replace("\\", "/")
+                for path in project_root.glob(pattern)
+                if path.is_file()
+            )
+
+        app_files = rel_paths("app/services/*.py")
+        test_files = rel_paths("tests/test_*.py")
+        top_level_files = [
+            path
+            for path in (
+                "indexer.py",
+                "regression_queries.py",
+                "regression_test.py",
+                "stress_random_queries.py",
+                "README.md",
+            )
+            if (project_root / path).is_file()
+        ]
+
+        lines = ["known_repo_files:"]
+        for path in app_files:
+            lines.append(f"- {path}")
+        for path in test_files:
+            lines.append(f"- {path}")
+        for path in top_level_files:
+            lines.append(f"- {path}")
+
+        lines.append("known_test_commands:")
+        lines.append('- python -m unittest discover -s tests -p "test_*.py" -v')
+        if (project_root / "regression_test.py").is_file():
+            lines.append("- python regression_test.py")
+        if (project_root / "regression_queries.py").is_file():
+            lines.append("- python regression_queries.py")
+        if (project_root / "indexer.py").is_file():
+            lines.append("- python indexer.py")
+
+        lines.append("repo_rules:")
+        lines.append("- Use only file paths listed above unless you explicitly say you are creating a new file.")
+        lines.append("- Do not reference pytest unless the repo guidance lists it.")
+        lines.append("- Do not invent flags for python indexer.py that are not shown in repo guidance.")
+        lines.append("- Prefer plain English over jargon in the final execution brief.")
         return "\n".join(lines)
 
     def _run_git(self, project_root: Path, *args: str) -> str:

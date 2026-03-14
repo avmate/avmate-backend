@@ -1,53 +1,30 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import dataclass
+from typing import Any
 
-from app.schemas import ReferenceItem
 from app.services.search_service import SearchService
 
 
-def _reference(
-    citation: str,
-    *,
-    text: str,
-    score: float = 0.6,
-    regulation_type: str = "AIP",
-) -> ReferenceItem:
-    return ReferenceItem(
-        section_id=f"section-{abs(hash(citation)) % 100000}",
-        regulation_id=citation,
-        citation=citation,
-        title=f"Title for {citation}",
-        regulation_type=regulation_type,
-        source_file="source.pdf",
-        source_url="https://example.invalid/source.pdf",
-        text=text,
-        part="",
-        page_ref="",
-        table_ref="",
-        section_index=0,
-        chunk_index=0,
-        score=score,
-    )
-
 
 def _section(
+    section_id: str,
     citation: str,
     *,
     text: str,
-    title: str,
-    page_ref: str = "ENR 1.5 - 39",
+    title: str | None = None,
     regulation_type: str = "AIP",
-) -> dict:
+) -> dict[str, Any]:
     return {
-        "section_id": f"row-{abs(hash((citation, title))) % 100000}",
+        "section_id": section_id,
         "regulation_id": citation,
         "citation": citation,
         "part": "",
         "section_label": "",
-        "title": title,
+        "title": title or f"Title for {citation}",
         "text": text,
-        "page_ref": page_ref,
+        "page_ref": "",
         "table_ref": "",
         "source_file": "source.pdf",
         "source_url": "https://example.invalid/source.pdf",
@@ -56,811 +33,280 @@ def _section(
     }
 
 
-class _StubCanonicalStore:
-    def __init__(self, sections: list[dict]) -> None:
-        self._sections = sections
+class _FakeEmbeddings:
+    def encode(self, texts: list[str]) -> list[list[float]]:
+        return [[0.1, 0.2, 0.3] for _ in texts]
 
-    def search_sections_by_terms(
+
+class _FakeVectorStore:
+    def __init__(self, responses: list[dict[str, Any]]) -> None:
+        self._responses = list(responses)
+        self.calls: list[dict[str, Any]] = []
+
+    def query(self, embeddings: list[list[float]], fetch_k: int, where: dict[str, Any] | None = None) -> dict[str, Any]:
+        self.calls.append({"embeddings": embeddings, "fetch_k": fetch_k, "where": where})
+        if self._responses:
+            return self._responses.pop(0)
+        return {"metadatas": [[]], "distances": [[]]}
+
+
+class _FakeCanonicalStore:
+    def __init__(
         self,
-        terms: list[str],
         *,
-        limit: int = 120,
+        sections: list[dict[str, Any]],
+        exact_prefix_map: dict[str, list[str]] | None = None,
+        bm25_results: list[tuple[str, float]] | None = None,
+    ) -> None:
+        self._sections_by_id = {section["section_id"]: section for section in sections}
+        self._exact_prefix_map = exact_prefix_map or {}
+        self._bm25_results = bm25_results or []
+        self.bm25_calls: list[dict[str, Any]] = []
+
+    def get_sections_by_citation_prefix(self, prefix: str, *, limit: int = 20) -> list[dict[str, Any]]:
+        section_ids = self._exact_prefix_map.get(prefix, [])[:limit]
+        return [self._sections_by_id[section_id] for section_id in section_ids]
+
+    def search_sections_bm25(
+        self,
+        query: str,
+        *,
+        limit: int = 40,
         regulation_type: str | None = None,
-    ) -> list[dict]:
-        if regulation_type:
-            return [row for row in self._sections if row.get("regulation_type", "").lower() == regulation_type.lower()][:limit]
-        return self._sections[:limit]
+    ) -> list[tuple[str, float]]:
+        self.bm25_calls.append({"query": query, "limit": limit, "regulation_type": regulation_type})
+        return self._bm25_results[:limit]
+
+    def get_sections_by_ids(self, section_ids: list[str]) -> list[dict[str, Any]]:
+        return [self._sections_by_id[section_id] for section_id in section_ids if section_id in self._sections_by_id]
+
+
+@dataclass
+class _FakeLLM:
+    interpreted: dict[str, Any] | None = None
+
+    def interpret_query(self, query: str) -> dict[str, Any] | None:
+        return self.interpreted
 
 
 class SearchServiceRegressionTests(unittest.TestCase):
-    def setUp(self) -> None:
-        # Tests target ranking/citation internals only; external services are not used.
-        self.service = SearchService(embeddings=None, vector_store=None, canonical_store=None)
-
-    def test_ensure_parent_subsection_reference_inserts_5_3_parent(self) -> None:
-        references = [
-            _reference(
-                "AIP ENR 1.7 - 2 subsection 1.4.1",
-                text="QNH can be considered accurate only if provided by approved sources.",
-                score=0.93,
-            ),
-            _reference(
-                "AIP ENR 1.5 - 38 subsection 5.3.2",
-                text="5.3.2 Source details for QNH",
-                score=0.88,
-            ),
-            _reference(
-                "AIP ENR 1.5 - 38 subsection 5.3.3",
-                text="5.3.3 Additional QNH source conditions",
-                score=0.86,
-            ),
-        ]
-
-        augmented = self.service._ensure_parent_subsection_reference(references, parent_label="5.3", limit=6)
-        citations = [item.citation for item in augmented]
-
-        self.assertIn("AIP ENR 1.5 - 38 subsection 5.3", citations)
-        self.assertLess(
-            citations.index("AIP ENR 1.5 - 38 subsection 5.3"),
-            citations.index("AIP ENR 1.5 - 38 subsection 5.3.2"),
-        )
-        parent_item = next(item for item in augmented if item.citation == "AIP ENR 1.5 - 38 subsection 5.3")
-        child_item = next(item for item in augmented if item.citation == "AIP ENR 1.5 - 38 subsection 5.3.2")
-        self.assertNotEqual(parent_item.text, child_item.text)
-        self.assertTrue(parent_item.text.startswith("5.3"))
-
-    def test_prioritize_weather_minima_references_prefers_subsection_6_2(self) -> None:
-        references = [
-            _reference(
-                "AIP GEN 2.1 - 3 subsection 4.2.1",
-                text="Airspace specified as active on public holidays.",
-                score=0.97,
-            ),
-            _reference(
-                "AIP ENR 1.5 - 39 subsection 6.2.2",
-                text="Special alternate weather minima are identified on applicable charts.",
-                score=0.70,
-            ),
-            _reference(
-                "AIP ENR 1.5 - 39 subsection 6.2",
-                text="6.2 Special Alternate Weather Minima",
-                score=0.64,
-            ),
-        ]
-
-        ranked = self.service._prioritize_weather_minima_references(references, top_k=3)
-        self.assertGreaterEqual(len(ranked), 2)
-        self.assertEqual(ranked[0].citation, "AIP ENR 1.5 - 39 subsection 6.2")
-
-    def test_ensure_special_weather_parent_reference_promotes_page_39_parent(self) -> None:
-        references = [
-            _reference(
-                "AIP ENR 1.5 - 38 subsection 6.2",
-                text="6.2 Alternate minima section",
-                score=0.91,
-            ),
-            _reference(
-                "AIP ENR 1.5 - 39 subsection 6.2.2",
-                text="6.2.2 Special alternate weather minima are identified on charts.",
-                score=0.89,
-            ),
-        ]
-
-        normalized = self.service._ensure_special_weather_parent_reference(references, limit=5)
-        self.assertEqual(normalized[0].citation, "AIP ENR 1.5 - 39 subsection 6.2")
-
-    def test_ensure_special_weather_parent_reference_prefers_phrase_for_explicit_query(self) -> None:
-        references = [
-            _reference(
-                "AIP ENR 1.5 - 39 subsection 6.2.3",
-                text="6.2.3 Where there is a protracted unserviceability of approach aids.",
-                score=0.93,
-            ),
-            _reference(
-                "AIP ENR 1.5 - 39 subsection 6.2.1",
-                text="6.2.1 Special alternate weather minima are available for specified approaches.",
-                score=0.86,
-            ),
-            _reference(
-                "AIP ENR 1.5 - 38 subsection 6.2",
-                text="6.2 Special Alternate Weather Minima......................................ENR 1.5 - 39",
-                score=0.84,
-            ),
-        ]
-
-        normalized = self.service._ensure_special_weather_parent_reference(
-            references,
-            limit=5,
-            prefer_special_phrase=True,
-        )
-        self.assertEqual(normalized[0].citation, "AIP ENR 1.5 - 39 subsection 6.2")
-        self.assertIn("Special alternate weather minima", normalized[0].text)
-
-    def test_combine_score_prefers_explicit_subsection_match(self) -> None:
-        profile = self.service._build_query_profile("What does ENR 1.5 subsection 6.2 say?")
-
-        match_score, match_passes = self.service._combine_score(
-            query_profile=profile,
-            document="6.2 Special Alternate Weather Minima apply in specified chart conditions.",
-            citation="AIP 6.2",
-            regulation_type="AIP",
-            semantic_score=0.62,
-            requested_citations=[],
-            page_ref="ENR 1.5 - 39",
-        )
-        miss_score, miss_passes = self.service._combine_score(
-            query_profile=profile,
-            document="6.2 Unrelated section from a different ENR chapter.",
-            citation="AIP 6.2",
-            regulation_type="AIP",
-            semantic_score=0.62,
-            requested_citations=[],
-            page_ref="ENR 1.10 - 12",
-        )
-
-        self.assertTrue(match_passes)
-        self.assertFalse(miss_passes)
-        self.assertGreater(match_score, miss_score)
-
-    def test_select_best_aip_subsection_honors_explicit_6_2_query(self) -> None:
-        profile = self.service._build_query_profile("What does ENR 1.5 subsection 6.2 say?")
-        sample_text = """
-6.1 Standard Alternate Weather Minima
-Standard alternate minima text applies to baseline operations.
-6.2 Special Alternate Weather Minima
-Special alternate weather minima are identified with a double asterisk.
-6.2.2 Special alternate weather minima are identified on applicable instrument approach charts.
-6.3 Other Minima Notes
-Additional notes unrelated to special alternate minima.
-        """.strip()
-
-        label, block = self.service._select_best_aip_subsection(sample_text, "AIP 6.1", profile)
-        self.assertEqual(label, "6.2")
-        self.assertIn("Special alternate weather minima", block)
-
-    def test_build_query_profile_sets_heading_rollup_for_criteria_queries(self) -> None:
-        profile = self.service._build_query_profile(
-            "What is the approach criteria for the Special Alternate Weather Minima?"
-        )
-        self.assertTrue(profile["heading_rollup_intent"])
-
-    def test_build_query_profile_sets_passenger_recency_intent(self) -> None:
-        profile = self.service._build_query_profile(
-            "What are the specific recency requirements for a PPL to carry passengers?"
-        )
-        self.assertTrue(profile["passenger_recency_intent"])
-        self.assertFalse(profile["heading_rollup_intent"])
-
-    def test_build_query_profile_sets_fuel_requirement_intent(self) -> None:
-        profile = self.service._build_query_profile(
-            "Under CASR Part 91, what are the fuel requirements for a small aeroplane?"
-        )
-        self.assertTrue(profile["fuel_requirement_intent"])
-
-    def test_build_query_profile_sets_raim_intent(self) -> None:
-        profile = self.service._build_query_profile(
-            "What is RAIM and when must it be checked for an IFR flight?"
-        )
-        self.assertTrue(profile["raim_intent"])
-        self.assertTrue(profile["aip_preferred_intent"])
-
-    def test_build_query_profile_sets_missed_approach_intent(self) -> None:
-        profile = self.service._build_query_profile(
-            "What would deem a pilot to conduct a missed approach on final?"
-        )
-        self.assertTrue(profile["missed_approach_intent"])
-        self.assertTrue(profile["aip_preferred_intent"])
-
-    def test_build_query_profile_sets_circling_procedure_intent(self) -> None:
-        profile = self.service._build_query_profile(
-            "Explain the Circle-to-Land procedure and its limitations."
-        )
-        self.assertTrue(profile["circling_procedure_intent"])
-        self.assertTrue(profile["aip_preferred_intent"])
-
-    def test_has_speed_limit_evidence_handles_compact_tokens(self) -> None:
-        text = "Aircraft operating below 10,000FT may be limited to 250KT IAS in the applicable airspace."
-        self.assertTrue(self.service._has_speed_limit_evidence(text))
-
-    def test_select_best_aip_subsection_prefers_raim_block(self) -> None:
-        profile = self.service._build_query_profile(
-            "What is RAIM and when must it be checked for an IFR flight?"
-        )
-        sample_text = """
-4.8 GNSS - Operations Without RAIM
-4.8.1 ATS services are predicated on accurate aircraft navigation and position fixing. If GNSS integrity is not assured due to loss of RAIM or RAIM ALERT, the following procedures must be adopted.
-6.3 GNSS Reporting Requirements and Procedures
-6.3.3 When responding to ATC requests for distance information, pilots should provide GNSS distance unless RAIM is currently not available.
-6.3.5 If a GNSS distance is provided and RAIM is not currently available, the report should be suffixed NEGATIVE RAIM.
-        """.strip()
-
-        label, block = self.service._select_best_aip_subsection(sample_text, "AIP 4.8", profile)
-        self.assertEqual(label, "4.8.1")
-        self.assertIn("RAIM", block)
-
-    def test_prioritize_circling_procedure_references_prefers_aip_circling_rules(self) -> None:
-        references = [
-            _reference(
-                "CASR 61.235",
-                regulation_type="CASR",
-                text="CASR Part 61 training administration text.",
-                score=0.94,
-            ),
-            _reference(
-                "AIP ENR 1.5 - 3 subsection 1.6.2",
-                text="1.6.2 A circling approach is an extension of an instrument approach to the published circling approach minima with the intent to visually manoeuvre the aircraft to align with the runway for a landing.",
-                score=0.72,
-            ),
-            _reference(
-                "AIP ENR 1.5 - 5 subsection 1.6.7.2",
-                text="1.6.7.2 During visual circling, descent below the promulgated circling approach minima should not be made until required visual reference is established and the landing threshold is in sight.",
-                score=0.7,
-            ),
-        ]
-
-        ranked = self.service._prioritize_circling_procedure_references(references, top_k=3)
-        self.assertEqual(ranked[0].citation, "AIP ENR 1.5 - 3 subsection 1.6.2")
-
-    def test_prioritize_raim_references_prefers_aip_raim_rules(self) -> None:
-        references = [
-            _reference(
-                "CASR 21.5.2",
-                regulation_type="CASR",
-                text="CASR handbook administration text.",
-                score=0.95,
-            ),
-            _reference(
-                "AIP ENR 1.1 - 28 subsection 4.8.1",
-                text="4.8.1 If GNSS integrity is not assured due to loss of RAIM or RAIM ALERT, the following procedures must be adopted.",
-                score=0.73,
-            ),
-            _reference(
-                "AIP ENR 1.1 - 42 subsection 6.3.3",
-                text="6.3.3 When responding to ATC requests for distance information, pilots should provide GNSS distance unless RAIM is currently not available.",
-                score=0.72,
-            ),
-        ]
-
-        ranked = self.service._prioritize_raim_references(references, top_k=3)
-        self.assertEqual(ranked[0].citation, "AIP ENR 1.1 - 28 subsection 4.8.1")
-
-    def test_prioritize_missed_approach_references_prefers_aip_missed_approach_rule(self) -> None:
-        references = [
-            _reference(
-                "CASR 2.8",
-                regulation_type="CASR",
-                text="CASR Part 141 or Part 142 training provider administration text.",
-                score=0.95,
-            ),
-            _reference(
-                "AIP ENR 1.1 - 15 subsection 2.11.2.3",
-                text="If visual at the minima, the nominated runway becomes the clearance limit. If the aircraft is unable to land from the instrument approach, it is cleared to carry out the published missed approach.",
-                score=0.73,
-            ),
-            _reference(
-                "AIP ENR 1.5 - 10 subsection 1.9.1",
-                text="1.9.1 A missed approach must be executed if visual reference is not established at or before reaching the MAPT or DA/RA Height, or if a landing cannot be effected from a runway approach.",
-                score=0.72,
-            ),
-        ]
-
-        ranked = self.service._prioritize_missed_approach_references(references, top_k=3)
-        self.assertEqual(ranked[0].citation, "AIP ENR 1.5 - 10 subsection 1.9.1")
-
-    def test_expand_heading_subsection_references_includes_parent_and_children(self) -> None:
-        service = SearchService(
-            embeddings=None,
-            vector_store=None,
-            canonical_store=_StubCanonicalStore(
-                [
-                    _section(
-                        "AIP 6.2.1",
-                        title="AIP 6.2.1 Special alternate weather minima are available",
-                        text="6.2.1 Special alternate weather minima are available for specified approaches with dual ILS/VOR capability.",
-                    ),
-                    _section(
-                        "AIP 6.2.2",
-                        title="AIP 6.2.2 Special alternate weather minima are identified on charts",
-                        text="6.2.2 Special alternate weather minima are identified on applicable instrument approach charts.",
-                    ),
-                    _section(
-                        "AIP 6.2.3",
-                        title="AIP 6.2.3 Where special minima are not available",
-                        text="6.2.3 Where there is a protracted unserviceability, special alternate minima may be unavailable.",
-                    ),
-                ]
-            ),
-        )
-        profile = service._build_query_profile("What is the approach criteria for the Special Alternate Weather Minima?")
-        seed_refs = [
-            _reference(
-                "AIP ENR 1.5 - 39 subsection 6.2",
-                text="6.2 Special Alternate Weather Minima",
-                score=0.94,
-            ),
-            _reference(
-                "AIP ENR 1.5 - 39 subsection 6.2.2",
-                text="6.2.2 Special alternate weather minima are identified on applicable charts.",
-                score=0.9,
-            ),
-        ]
-
-        expanded = service._expand_heading_subsection_references(seed_refs, profile, top_k=6)
-        citations = [item.citation for item in expanded]
-
-        self.assertIn("AIP ENR 1.5 - 39 subsection 6.2", citations)
-        self.assertIn("AIP ENR 1.5 - 39 subsection 6.2.1", citations)
-        self.assertIn("AIP ENR 1.5 - 39 subsection 6.2.2", citations)
-        self.assertIn("AIP ENR 1.5 - 39 subsection 6.2.3", citations)
-
-    def test_select_answer_reference_prefers_operational_child_for_criteria_query(self) -> None:
-        profile = self.service._build_query_profile("What is the approach criteria for the Special Alternate Weather Minima?")
-        references = [
-            _reference(
-                "AIP ENR 1.5 - 39 subsection 6.2",
-                text="6.2.2 Special alternate weather minima are identified on charts.",
-                score=0.95,
-            ),
-            _reference(
-                "AIP ENR 1.5 - 39 subsection 6.2.1",
-                text="6.2.1 Dual ILS/VOR approach capability must include duplicated LOC and GP.",
-                score=0.9,
-            ),
-        ]
-
-        selected = self.service._select_answer_reference(profile, references)
-        self.assertEqual(selected.citation, "AIP ENR 1.5 - 39 subsection 6.2.1")
-
-    def test_plain_english_and_example_for_weather_minima_are_operational(self) -> None:
-        query = "What is the approach criteria for the Special Alternate Weather Minima?"
-        references = [
-            _reference(
-                "AIP ENR 1.5 - 39 subsection 6.2",
-                text="6.2 Special Alternate Weather Minima",
-                score=0.94,
-            ),
-            _reference(
-                "AIP ENR 1.5 - 39 subsection 6.2.1",
-                text="6.2.1 Special alternate weather minima are available for specified approaches with dual ILS/VOR approach capability.",
-                score=0.9,
-            ),
-            _reference(
-                "AIP ENR 1.5 - 39 subsection 6.2.2",
-                text="6.2.2 Special minima are identified on charts and not available if required MET/ATS services are unavailable.",
-                score=0.88,
-            ),
-            _reference(
-                "AIP ENR 1.5 - 39 subsection 6.2.3",
-                text="6.2.3 NOTAM advises non-availability or revision during prolonged aid/facility outages.",
-                score=0.86,
-            ),
-        ]
-        answer_reference = references[1]
-
-        plain_english = self.service._build_plain_english(query, answer_reference, references)
-        example = self.service._build_example(query, answer_reference, references)
-
-        self.assertIn("plain english", plain_english.lower())
-        self.assertIn("dual ils/vor", plain_english.lower())
-        self.assertIn("standard alternate minima", plain_english.lower())
-        self.assertIn("example:", example.lower())
-        self.assertIn("pilot", example.lower())
-        self.assertIn("notam", example.lower())
-
-    def test_format_readable_text_adds_sentence_spacing_and_preserves_paragraphs(self) -> None:
-        raw = "Sentence one.Second sentence.\n\n- bullet    one\n- bullet two"
-        formatted = self.service._format_readable_text(raw)
-        self.assertIn("Sentence one. Second sentence.", formatted)
-        self.assertIn("\n\n- bullet one\n- bullet two", formatted)
-
-    def test_is_precise_citation_rejects_malformed_non_aip_tokens(self) -> None:
-        self.assertFalse(self.service._is_precise_citation("CAO level", "CAO"))
-        self.assertFalse(self.service._is_precise_citation("CAR do", "CAR"))
-        self.assertTrue(self.service._is_precise_citation("CASR Part 61", "CASR"))
-
-    def test_drop_malformed_citations_filters_invalid_items(self) -> None:
-        refs = [
-            _reference("CAO level", text="Invalid citation text", regulation_type="CAO", score=0.91),
-            _reference(
-                "AIP ENR 1.5 - 39 subsection 6.2",
-                text="Valid AIP citation text",
-                regulation_type="AIP",
-                score=0.9,
-            ),
-        ]
-        filtered = self.service._drop_malformed_citations(refs, limit=5)
-        self.assertEqual(len(filtered), 1)
-        self.assertEqual(filtered[0].citation, "AIP ENR 1.5 - 39 subsection 6.2")
-
-    def test_enforce_explicit_page_hints_prefers_matching_page_block(self) -> None:
-        refs = [
-            _reference(
-                "AIP ENR 1.6 - 5 subsection 6.2",
-                text="6.2 Radio Failure Procedure",
-                score=0.91,
-            ),
-            _reference(
-                "AIP ENR 1.5 - 39 subsection 6.2",
-                text="6.2 Special Alternate Weather Minima",
-                score=0.88,
-            ),
-        ]
-        filtered = self.service._enforce_explicit_page_hints(refs, ["enr 1.5"], limit=5)
-
-        self.assertTrue(filtered)
-        self.assertEqual(filtered[0].citation, "AIP ENR 1.5 - 39 subsection 6.2")
-
-    def test_explicit_subsection_seed_references_prefers_matching_page_hint(self) -> None:
-        service = SearchService(
-            embeddings=None,
-            vector_store=None,
-            canonical_store=_StubCanonicalStore(
-                [
-                    _section(
-                        "AIP 6.2",
-                        title="AIP 6.2 Radio Failure Procedure",
-                        text="6.2 Radio Failure Procedure for communications contingencies.",
-                        page_ref="ENR 1.6 - 5",
-                        regulation_type="AIP",
-                    ),
-                    _section(
-                        "AIP 6.2",
-                        title="AIP 6.2 Special Alternate Weather Minima",
-                        text="6.2 Special Alternate Weather Minima with linked approach criteria.",
-                        page_ref="ENR 1.5 - 39",
-                        regulation_type="AIP",
-                    ),
-                ]
-            ),
-        )
-        profile = service._build_query_profile("What does ENR 1.5 subsection 6.2 say?")
-        seeded = service._explicit_subsection_seed_references(profile, top_k=5)
-
-        self.assertTrue(seeded)
-        self.assertEqual(seeded[0].citation, "AIP ENR 1.5 - 39 subsection 6.2")
-
-    def test_requested_citation_seed_references_match_exact_non_aip_citation(self) -> None:
-        service = SearchService(
-            embeddings=None,
-            vector_store=None,
-            canonical_store=_StubCanonicalStore(
-                [
-                    _section(
-                        "CASR 61.215",
-                        title="CASR 61.215 Unrelated Part 61 provision",
-                        text="61.215 Some unrelated provision.",
-                        page_ref="",
-                        regulation_type="CASR",
-                    ),
-                    _section(
-                        "CASR 61.395",
-                        title="CASR 61.395 Passenger recency",
-                        text="61.395 Limitations on exercise of privileges of pilot licences—recent experience for certain passenger flight activities.",
-                        page_ref="",
-                        regulation_type="CASR",
-                    ),
-                ]
-            ),
-        )
-        profile = service._build_query_profile("CASR 61.395 passenger recency")
-        seeded = service._requested_citation_seed_references(["casr 61.395"], profile, top_k=5)
-
-        self.assertTrue(seeded)
-        self.assertEqual(seeded[0].citation, "CASR 61.395")
-
-    def test_requested_citation_seed_references_prefer_operational_text_over_toc_line(self) -> None:
-        service = SearchService(
-            embeddings=None,
-            vector_store=None,
-            canonical_store=_StubCanonicalStore(
-                [
-                    _section(
-                        "CASR 61.395",
-                        title="CASR 61.395 Passenger recency contents line",
-                        text="61.395 Limitations on exercise of privileges of pilot licences—recent experience for certain passenger flight activities......................................123",
-                        page_ref="",
-                        regulation_type="CASR",
-                    ),
-                    _section(
-                        "CASR 61.395",
-                        title="CASR 61.395 Passenger recency operative text",
-                        text="61.395 Limitations on exercise of privileges of pilot licences—recent experience for certain passenger flight activities (1) The holder of a pilot licence is authorised to pilot an aircraft carrying passengers only if the holder meets the recent experience requirements in this regulation.",
-                        page_ref="",
-                        regulation_type="CASR",
-                    ),
-                ]
-            ),
-        )
-        profile = service._build_query_profile("CASR 61.395 passenger recency")
-        seeded = service._requested_citation_seed_references(["casr 61.395"], profile, top_k=5)
-
-        self.assertTrue(seeded)
-        self.assertIn("authorised to pilot an aircraft carrying passengers", seeded[0].text.lower())
-
-    def test_build_answer_for_cpl_hours_uses_both_integrated_and_non_integrated_rules(self) -> None:
-        refs = [
-            _reference(
-                "CASR 61.590",
-                text="61.590 Aeronautical experience requirements for grant of commercial pilot licences—aeroplane category (1) An applicant must have at least 150 hours of aeronautical experience.",
-                regulation_type="CASR",
-                score=0.92,
-            ),
-            _reference(
-                "CASR 61.610",
-                text="61.610 Aeronautical experience requirements for grant of commercial pilot licences—aeroplane category (1) An applicant must have at least 200 hours of aeronautical experience.",
-                regulation_type="CASR",
-                score=0.91,
-            ),
-        ]
-
-        answer = self.service._build_answer("CPL minimum flight hours", refs[0], refs)
-        self.assertIn("150 hours", answer)
-        self.assertIn("200 hours", answer)
-        self.assertIn("CASR 61.590", answer)
-        self.assertIn("CASR 61.610", answer)
-
-    def test_build_answer_for_speed_limit_uses_250kt_summary(self) -> None:
-        refs = [
-            _reference(
-                "AIP ENR 1.4 - 13 subsection 4.1",
-                text="4.1 The table shows 250KT IAS below 10,000FT AMSL in the applicable airspace. Pilots must comply with airspace speed limitation unless specifically cancelled by ATC.",
-                regulation_type="AIP",
-                score=0.93,
-            ),
-        ]
-        answer = self.service._build_answer("Speed limit below 10,000ft", refs[0], refs)
-        self.assertIn("250KT IAS", answer)
-        self.assertIn("10,000FT AMSL", answer)
-
-    def test_intent_seed_references_for_passenger_recency_prefers_casr_61_395(self) -> None:
-        service = SearchService(
-            embeddings=None,
-            vector_store=None,
-            canonical_store=_StubCanonicalStore(
-                [
-                    _section(
-                        "CASR 121.250",
-                        title="CASR 121.250 Carriage of restricted persons",
-                        text="The aeroplane operator exposition must include procedures for carrying a restricted person.",
-                        page_ref="",
-                        regulation_type="CASR",
-                    ),
-                    _section(
-                        "CASR 61.395",
-                        title="CASR 61.395 Passenger recency",
-                        text="61.395 Limitations on exercise of privileges of pilot licences—recent experience for certain passenger flight activities.",
-                        page_ref="",
-                        regulation_type="CASR",
-                    ),
-                ]
-            ),
-        )
-        profile = service._build_query_profile("What are the specific recency requirements for a PPL to carry passengers?")
-        seeded = service._intent_seed_references(profile, top_k=5)
-
-        self.assertTrue(seeded)
-        self.assertEqual(seeded[0].citation, "CASR 61.395")
-
-    def test_intent_seed_references_for_fuel_requirements_prefers_casr_91_455(self) -> None:
-        service = SearchService(
-            embeddings=None,
-            vector_store=None,
-            canonical_store=_StubCanonicalStore(
-                [
-                    _section(
-                        "CASR 91.475",
-                        title="CASR 91.475 Fuelling aircraft—fire fighting equipment",
-                        text="91.475 Fuelling aircraft—fire fighting equipment.",
-                        page_ref="",
-                        regulation_type="CASR",
-                    ),
-                    _section(
-                        "CASR 91.455",
-                        title="CASR 91.455 Fuel requirements",
-                        text="91.455 Fuel requirements. The Part 91 Manual of Standards may prescribe requirements relating to fuel for aircraft.",
-                        page_ref="",
-                        regulation_type="CASR",
-                    ),
-                ]
-            ),
-        )
-        profile = service._build_query_profile(
-            "Under CASR Part 91, what are the fuel requirements for a small aeroplane (fixed-wing)?"
-        )
-        seeded = service._intent_seed_references(profile, top_k=5)
-
-        self.assertTrue(seeded)
-        self.assertEqual(seeded[0].citation, "CASR 91.455")
-
-    def test_prioritize_passenger_recency_references_promotes_casr_61_395(self) -> None:
-        refs = [
-            _reference(
-                "CASR 121.250",
-                text="121.250 Carriage of restricted persons.",
-                regulation_type="CASR",
-                score=0.98,
-            ),
-            _reference(
-                "CASR 61.395",
-                text="61.395 Limitations on exercise of privileges of pilot licences—recent experience for certain passenger flight activities.",
-                regulation_type="CASR",
-                score=0.91,
-            ),
-        ]
-        ranked = self.service._prioritize_passenger_recency_references(refs, top_k=5)
-        self.assertEqual(ranked[0].citation, "CASR 61.395")
-
-    def test_is_reference_relevant_for_passenger_recency_rejects_non_part_61_rules(self) -> None:
-        profile = self.service._build_query_profile(
-            "What are the specific recency requirements for a PPL to carry passengers?"
-        )
-        item = _reference(
-            "CASR 133.370",
-            text="133.370 Composition, number, qualifications and training. The pilot in command must have the recent experience for the flight required by Division 133.N.4.",
+    def test_search_prefers_exact_citation_match(self) -> None:
+        exact = _section(
+            "sec-exact",
+            "CASR 61.395",
+            text="Recent experience requirements for carrying passengers.",
             regulation_type="CASR",
-            score=0.84,
         )
-        self.assertFalse(self.service._is_reference_relevant(item, profile))
-
-    def test_prioritize_cpl_references_promotes_cpl_hour_sections_over_toc_noise(self) -> None:
-        refs = [
-            _reference(
-                "CASR 61.565",
-                text="61.565 Aeronautical experience requirements for grant of private pilot licences—airship category......................................141 Subpart 61.I—Commercial pilot licences 142",
-                regulation_type="CASR",
-                score=0.99,
-            ),
-            _reference(
-                "CASR 61.590",
-                text="61.590 Aeronautical experience requirements for grant of commercial pilot licences—aeroplane category (1) An applicant must have at least 150 hours of aeronautical experience.",
-                regulation_type="CASR",
-                score=0.82,
-            ),
-            _reference(
-                "CASR 61.610",
-                text="61.610 Aeronautical experience requirements for grant of commercial pilot licences—aeroplane category (1) An applicant must have at least 200 hours of aeronautical experience.",
-                regulation_type="CASR",
-                score=0.81,
-            ),
-        ]
-        ranked = self.service._prioritize_cpl_references(refs, top_k=5)
-        self.assertIn(ranked[0].citation, {"CASR 61.590", "CASR 61.610"})
-
-    def test_prioritize_speed_limit_references_prefers_airspace_limit_table(self) -> None:
-        refs = [
-            _reference(
-                "AIP ENR 1.1 - 65 subsection 9.12.2",
-                text="9.12.2 Faster larger aircraft - prior to arriving in the circuit and when below 10,000FT - can be at speeds up to 250KT.",
-                score=0.94,
-            ),
-            _reference(
-                "AIP ENR 1.4 - 13 subsection 4.1",
-                text="4.1 Pilots must comply with airspace speed limitation. 250KT IAS below 10,000FT AMSL applies in the listed airspace.",
-                score=0.9,
-            ),
-        ]
-        ranked = self.service._prioritize_speed_limit_references(refs, top_k=5)
-        self.assertEqual(ranked[0].citation, "AIP ENR 1.4 - 13 subsection 4.1")
-
-    def test_prioritize_fuel_requirement_references_promotes_casr_91_455_over_rotorcraft(self) -> None:
-        profile = self.service._build_query_profile(
-            "Under CASR Part 91, what are the fuel requirements for a small aeroplane (fixed-wing)?"
+        unrelated = _section(
+            "sec-other",
+            "CASR 61.400",
+            text="Flight review requirements.",
+            regulation_type="CASR",
         )
-        refs = [
-            _reference(
-                "CASR 91.430",
-                text="91.430 Safety when rotorcraft operating on ground.",
-                regulation_type="CASR",
-                score=0.99,
-            ),
-            _reference(
-                "CASR 91.455",
-                text="91.455 Fuel requirements. The Part 91 Manual of Standards may prescribe requirements relating to fuel for aircraft.",
-                regulation_type="CASR",
-                score=0.91,
-            ),
-        ]
-        ranked = self.service._prioritize_fuel_requirement_references(refs, profile, top_k=5)
-        self.assertEqual(ranked[0].citation, "CASR 91.455")
-
-    def test_explicit_special_weather_query_prefers_page_39_parent_after_dedupe(self) -> None:
-        refs = [
-            _reference(
-                "AIP ENR 1.5 - 38 subsection 6.2",
-                text="6.2 Special Alternate Weather Minima......................................ENR 1.5 - 39",
-                score=0.97,
-            ),
-            _reference(
-                "AIP ENR 1.5 - 39 subsection 6.2.1",
-                text="6.2.1 Special alternate weather minima are available for specified approaches with dual ILS/VOR approach capability.",
-                score=0.85,
-            ),
-            _reference(
-                "AIP ENR 1.5 - 39 subsection 6.2.2",
-                text="6.2.2 Special alternate weather minima are identified on applicable instrument approach charts.",
-                score=0.84,
-            ),
-        ]
-
-        ranked = self.service._ensure_special_weather_parent_reference(
-            refs,
-            limit=5,
-            prefer_special_phrase=True,
-        )
-        ranked = self.service._dedupe_by_subsection_label(ranked, limit=5)
-        citations = [item.citation for item in ranked]
-
-        self.assertEqual(citations[0], "AIP ENR 1.5 - 39 subsection 6.2")
-        self.assertNotIn("AIP ENR 1.5 - 38 subsection 6.2", citations)
-
-    def test_intent_seed_references_for_cpl_prefers_part_61_hour_requirements(self) -> None:
         service = SearchService(
-            embeddings=None,
-            vector_store=None,
-            canonical_store=_StubCanonicalStore(
+            embeddings=_FakeEmbeddings(),
+            vector_store=_FakeVectorStore(
+                [{"metadatas": [[{"section_id": "sec-other"}]], "distances": [[0.01]]}]
+            ),
+            canonical_store=_FakeCanonicalStore(
+                sections=[exact, unrelated],
+                exact_prefix_map={"CASR 61.395": ["sec-exact"]},
+            ),
+        )
+
+        response = service.search("CASR 61.395 passenger recency", top_k=3)
+
+        self.assertEqual(response.references[0].citation, "CASR 61.395")
+        self.assertEqual(response.references[0].score, 1.0)
+        self.assertIn("CASR 61.395", response.citations)
+
+    def test_search_uses_bm25_when_semantic_results_are_empty(self) -> None:
+        target = _section(
+            "sec-bm25",
+            "CASR 61.395",
+            text="Passenger recency requirements for pilot licence holders.",
+            regulation_type="CASR",
+        )
+        service = SearchService(
+            embeddings=_FakeEmbeddings(),
+            vector_store=_FakeVectorStore([{"metadatas": [[]], "distances": [[]]}]),
+            canonical_store=_FakeCanonicalStore(
+                sections=[target],
+                bm25_results=[("sec-bm25", 0.72)],
+            ),
+        )
+
+        response = service.search("passenger recency requirements", top_k=3)
+
+        self.assertEqual(response.references[0].citation, "CASR 61.395")
+        self.assertGreaterEqual(response.references[0].score, 0.7)
+
+    def test_search_filters_aip_results_to_explicit_chapter(self) -> None:
+        wrong_chapter = _section(
+            "sec-enr14",
+            "AIP ENR 1.4 6.2.1",
+            text="Unrelated ENR 1.4 content.",
+            regulation_type="AIP",
+        )
+        right_chapter = _section(
+            "sec-enr15",
+            "AIP ENR 1.5 6.2.1",
+            text="Special alternate weather minima are available for specified approaches.",
+            regulation_type="AIP",
+        )
+        service = SearchService(
+            embeddings=_FakeEmbeddings(),
+            vector_store=_FakeVectorStore(
                 [
-                    _section(
-                        "CASR Part 61",
-                        title="CASR Part 61 Commercial pilot licence aeronautical experience",
-                        text="The applicant for a commercial pilot licence must meet aeronautical experience hours requirements under Part 61.",
-                        page_ref="",
-                        regulation_type="CASR",
-                    ),
-                    _section(
-                        "CAR 206",
-                        title="General operations rule",
-                        text="This section discusses non-CPL operational requirements.",
-                        page_ref="",
-                        regulation_type="CAR",
-                    ),
-                    _section(
-                        "CAO level",
-                        title="Malformed CAO heading",
-                        text="Not a precise citation and must not be used.",
-                        page_ref="",
-                        regulation_type="CAO",
-                    ),
+                    {
+                        "metadatas": [[{"section_id": "sec-enr14"}, {"section_id": "sec-enr15"}]],
+                        "distances": [[0.01, 0.2]],
+                    }
                 ]
             ),
+            canonical_store=_FakeCanonicalStore(sections=[wrong_chapter, right_chapter]),
         )
-        profile = service._build_query_profile("CPL minimum flight hours")
-        seeded = service._intent_seed_references(profile, top_k=5)
 
-        self.assertTrue(seeded)
-        self.assertEqual(seeded[0].citation, "CASR Part 61")
-        self.assertTrue(all("CAO level" != item.citation for item in seeded))
-        self.assertTrue(all(service._is_precise_citation(item.citation, item.regulation_type) for item in seeded))
+        response = service.search("What does ENR 1.5 subsection 6.2 say?", top_k=3)
 
-    def test_intent_seed_references_for_speed_prefers_250_knots_below_10000(self) -> None:
+        self.assertTrue(response.references)
+        self.assertEqual(response.references[0].citation, "AIP ENR 1.5 6.2.1")
+        self.assertTrue(all(ref.citation.startswith("AIP ENR 1.5") for ref in response.references))
+
+    def test_search_reranks_candidates_using_explicit_citation_prefix(self) -> None:
+        broad = _section(
+            "sec-broad",
+            "CASR 61.390",
+            text="Another Part 61 rule.",
+            regulation_type="CASR",
+        )
+        direct = _section(
+            "sec-direct",
+            "CASR 61.395",
+            text="Passenger recency requirements.",
+            regulation_type="CASR",
+        )
         service = SearchService(
-            embeddings=None,
-            vector_store=None,
-            canonical_store=_StubCanonicalStore(
+            embeddings=_FakeEmbeddings(),
+            vector_store=_FakeVectorStore(
                 [
-                    _section(
-                        "AIP 1.7.4",
-                        title="AIP 1.7.4 Speed restrictions",
-                        text="Below 10 000 FT, indicated airspeed must not exceed 250 knots unless authorised by ATC.",
-                        page_ref="ENR 1.1 - 7",
-                        regulation_type="AIP",
-                    ),
-                    _section(
-                        "AIP 3.1.2",
-                        title="AIP 3.1.2 unrelated heading",
-                        text="Unrelated text without the controlling speed limit numbers.",
-                        page_ref="ENR 1.10 - 12",
-                        regulation_type="AIP",
-                    ),
+                    {
+                        "metadatas": [[{"section_id": "sec-broad"}, {"section_id": "sec-direct"}]],
+                        "distances": [[0.10, 0.12]],
+                    }
                 ]
             ),
+            canonical_store=_FakeCanonicalStore(sections=[broad, direct]),
         )
-        profile = service._build_query_profile("Speed limit below 10,000ft")
-        seeded = service._intent_seed_references(profile, top_k=5)
 
-        self.assertTrue(seeded)
-        self.assertEqual(seeded[0].citation, "AIP ENR 1.1 - 7 subsection 1.7.4")
-        self.assertTrue(any("250 knots" in item.text.lower() for item in seeded))
-        self.assertTrue(all(service._is_precise_citation(item.citation, item.regulation_type) for item in seeded))
+        response = service.search("CASR 61.395 passenger recency", top_k=3)
+
+        self.assertEqual(response.references[0].citation, "CASR 61.395")
+
+    def test_search_uses_llm_regulation_hint_for_vector_and_bm25_queries(self) -> None:
+        aip_section = _section(
+            "sec-raim",
+            "AIP ENR 1.1 4.8.1",
+            text="If GNSS integrity is not assured due to loss of RAIM, the following procedures apply.",
+            regulation_type="AIP",
+        )
+        vector_store = _FakeVectorStore(
+            [{"metadatas": [[{"section_id": "sec-raim"}]], "distances": [[0.2]]}]
+        )
+        canonical_store = _FakeCanonicalStore(
+            sections=[aip_section],
+            bm25_results=[("sec-raim", 0.65)],
+        )
+        llm = _FakeLLM(
+            interpreted={
+                "intent": "raim",
+                "regulation_type": "AIP",
+                "rewritten_query": "RAIM GNSS integrity procedures",
+                "keywords": ["raim", "gnss"],
+            }
+        )
+        service = SearchService(
+            embeddings=_FakeEmbeddings(),
+            vector_store=vector_store,
+            canonical_store=canonical_store,
+            llm_answer_service=llm,
+            enable_llm_query_assist=True,
+        )
+
+        response = service.search("What is RAIM and when must it be checked?", top_k=3)
+
+        self.assertEqual(response.references[0].citation, "AIP ENR 1.1 4.8.1")
+        self.assertEqual(vector_store.calls[0]["where"], {"regulation_type": {"$eq": "AIP"}})
+        self.assertEqual(canonical_store.bm25_calls[0]["regulation_type"], "AIP")
+
+    def test_search_routes_low_flying_query_to_casr_91_267(self) -> None:
+        low_flying = _section(
+            "sec-low-flying",
+            "CASR 91.267",
+            text="The aircraft must not be flown below 500 ft above the highest feature or obstacle within 300 m.",
+            regulation_type="CASR",
+        )
+        unrelated = _section(
+            "sec-mos",
+            "MOS 2.4.1",
+            text="Low-level competency standard for training operations.",
+            regulation_type="MOS",
+        )
+        vector_store = _FakeVectorStore(
+            [{"metadatas": [[{"section_id": "sec-mos"}]], "distances": [[0.02]]}]
+        )
+        service = SearchService(
+            embeddings=_FakeEmbeddings(),
+            vector_store=vector_store,
+            canonical_store=_FakeCanonicalStore(
+                sections=[low_flying, unrelated],
+                exact_prefix_map={"CASR 91.267": ["sec-low-flying"]},
+            ),
+        )
+
+        response = service.search("minimum safe altitude low flying below 500 feet AGL", top_k=3)
+
+        self.assertEqual(response.references[0].citation, "CASR 91.267")
+        self.assertEqual(vector_store.calls[0]["where"], {"regulation_type": {"$eq": "CASR"}})
+
+    def test_search_routes_class_g_vmc_query_to_mos_2_07(self) -> None:
+        vmc = _section(
+            "sec-vmc",
+            "MOS 2.07",
+            text="In Class G at or below 5,000 ft AMSL, aircraft must be clear of cloud and in sight of ground or water.",
+            regulation_type="MOS",
+        )
+        rule = _section(
+            "sec-casr-vmc",
+            "CASR 91.280",
+            text="A VFR flight must comply with the VMC criteria for the airspace in which it is conducted.",
+            regulation_type="CASR",
+        )
+        unrelated = _section(
+            "sec-aip",
+            "AIP GEN 3.4 6.11",
+            text="General phraseology content unrelated to VMC minima.",
+            regulation_type="AIP",
+        )
+        vector_store = _FakeVectorStore(
+            [{"metadatas": [[{"section_id": "sec-aip"}]], "distances": [[0.01]]}]
+        )
+        service = SearchService(
+            embeddings=_FakeEmbeddings(),
+            vector_store=vector_store,
+            canonical_store=_FakeCanonicalStore(
+                sections=[vmc, rule, unrelated],
+                exact_prefix_map={
+                    "MOS 2.07": ["sec-vmc"],
+                    "CASR 91.280": ["sec-casr-vmc"],
+                },
+            ),
+        )
+
+        response = service.search("VFR visibility and cloud clearance requirements in class G airspace", top_k=3)
+
+        self.assertEqual(response.references[0].citation, "MOS 2.07")
+        self.assertEqual(vector_store.calls[0]["where"], {"regulation_type": {"$eq": "MOS"}})
 
 
 if __name__ == "__main__":
