@@ -138,6 +138,34 @@ class CanonicalStore:
             ).all()
         return [self._row_to_dict(row) for row in rows]
 
+    def get_sections_by_citation_tree(self, citation: str, *, limit: int = 20) -> list[dict]:
+        """Return an exact citation plus structured descendants only.
+
+        Examples:
+        - `AIP ENR 1.5 6.2` → exact match plus `6.2.1`, `6.2.2`, etc
+        - `CAR 12`          → `CAR 12` only, not `CAR 120`
+        - `CASR 61.215`     → exact match plus child paragraphs such as `(1)`
+        """
+        normalized = " ".join(citation.split())
+        if not normalized:
+            return []
+
+        lowered = normalized.lower()
+        with session_scope() as session:
+            rows = session.scalars(
+                select(RegulationSection)
+                .where(
+                    or_(
+                        func.lower(RegulationSection.citation) == lowered,
+                        func.lower(RegulationSection.citation).like(f"{lowered}.%"),
+                        func.lower(RegulationSection.citation).like(f"{lowered}(%"),
+                    )
+                )
+                .order_by(RegulationSection.citation)
+                .limit(limit)
+            ).all()
+        return [self._row_to_dict(row) for row in rows]
+
     def search_sections_by_terms(
         self,
         terms: list[str],

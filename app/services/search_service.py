@@ -49,9 +49,9 @@ class SearchService:
 
     def search(self, query: str, top_k: int = 5, request_id: str = "") -> SearchResponse:
         # 1. Extract any explicit citations written in the query (e.g. "CASR 135.175")
-        explicit_citations = extract_citations(query)
+        explicit_citations = [_normalize_structured_citation(c) for c in extract_citations(query)]
         explicit_families = {_detect_family(c) for c in explicit_citations} - {None}
-        query_route = _route_known_query(query) if not explicit_citations else None
+        query_route = _route_explicit_citation_query(query, explicit_citations) if explicit_citations else _route_known_query(query)
 
         # 2. Exact citation lookup — deterministic, bypasses semantic for structured queries
         #    Only fires for specific section citations, not broad family/part references.
@@ -61,7 +61,7 @@ class SearchService:
         for citation in explicit_citations:
             if not _is_specific_citation(citation):
                 continue
-            for sec in self._canonical_store.get_sections_by_citation_prefix(citation):
+            for sec in self._canonical_store.get_sections_by_citation_tree(citation):
                 if sec["section_id"] not in seen_ids:
                     exact_candidates.append((1.0, sec))
                     seen_ids.add(sec["section_id"])
@@ -172,6 +172,34 @@ class SearchService:
                 if chapter_matched:
                     semantic_candidates = chapter_matched
 
+            broad_family_prefixes = [
+                prefix
+                for prefix in (_extract_broad_prefix(c) for c in explicit_citations if not _is_specific_citation(c))
+                if prefix
+            ]
+            if broad_family_prefixes:
+                broad_matched = [
+                    (score, sec)
+                    for score, sec in semantic_candidates
+                    if any(_citation_matches_family_part(sec.get("citation", ""), prefix) for prefix in broad_family_prefixes)
+                ]
+                if broad_matched or exact_candidates:
+                    semantic_candidates = broad_matched
+
+            family_part_prefixes = [
+                prefix
+                for prefix in (_extract_family_part_prefix(c) for c in explicit_citations if _is_specific_citation(c))
+                if prefix
+            ]
+            if family_part_prefixes:
+                family_matched = [
+                    (score, sec)
+                    for score, sec in semantic_candidates
+                    if any(_citation_matches_family_part(sec.get("citation", ""), prefix) for prefix in family_part_prefixes)
+                ]
+                if family_matched or exact_candidates:
+                    semantic_candidates = family_matched
+
         # 8. Merge: exact hits first (score=1.0), hybrid semantic+BM25 fill after
         candidates: list[tuple[float, dict]] = list(exact_candidates)
         for score, sec in semantic_candidates:
@@ -237,14 +265,17 @@ def _is_specific_citation(citation: str) -> bool:
           e.g. "AIP ENR 1.5 6.2" (4 tokens) → yes; "AIP ENR 1.5" (3 tokens) → no
     CASR: requires a dot in the part number — e.g. "CASR 61.385" → yes; "CASR 61" → no
     """
-    parts = citation.strip().split()
+    parts = _normalize_structured_citation(citation).split()
     if not parts:
         return False
     family = parts[0].upper()
     if family == "AIP":
         return len(parts) >= 4
     if len(parts) >= 2:
-        return "." in parts[1]
+        token = parts[1]
+        if family in {"CAR", "CAA"}:
+            return bool(re.fullmatch(r"\d+[A-Za-z]?(?:\([0-9A-Za-z]+\))?", token))
+        return "." in token or "(" in token
     return False
 
 
@@ -288,6 +319,21 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
                 "feature or obstacle within a horizontal radius of 300 m"
             ),
             "preferred_citations": ["CASR 91.267"],
+        }
+
+    if (
+        "fuel" in normalized
+        and "vfr" in normalized
+        and "day" in normalized
+        and any(term in normalized for term in ("requirement", "requirements", "reserve", "minimum"))
+    ):
+        return {
+            "regulation_hint": "MOS",
+            "search_text": (
+                "MOS 19.02 fuel requirements VFR flight by day final reserve fuel "
+                "minimum safe fuel aeroplane"
+            ),
+            "preferred_citations": ["MOS 19.02"],
         }
 
     if (
@@ -416,6 +462,31 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
     return None
 
 
+def _route_explicit_citation_query(query: str, citations: list[str]) -> dict[str, Any] | None:
+    """Provide structured routing for explicit but broad legal citations."""
+    normalized_query = " ".join(query.lower().split())
+    for citation in citations:
+        if _is_specific_citation(citation):
+            continue
+        family = _detect_family(citation)
+        if not family:
+            continue
+        broad_prefix = _extract_broad_prefix(citation)
+        if broad_prefix:
+            return {
+                "regulation_hint": family,
+                "search_text": f"{citation} {' '.join(normalized_query.split()[:12])}",
+                "preferred_citations": [broad_prefix],
+            }
+        if family == "CASR" and re.fullmatch(r"CASR\s+1998", citation, re.IGNORECASE):
+            return {
+                "regulation_hint": "CASR",
+                "search_text": "Civil Aviation Safety Regulations 1998 commencement definitions applicability",
+                "preferred_citations": ["CASR 1."],
+            }
+    return None
+
+
 def _rerank_by_citation(
     candidates: list[tuple[float, dict]],
     explicit_citations: list[str],
@@ -455,6 +526,55 @@ def _extract_chapter_prefix(citation: str) -> str:
     """
     m = re.match(r"^(AIP\s+(?:GEN|ENR|AD)\s+\d+\.\d+)", citation.strip(), re.IGNORECASE)
     return m.group(1) if m else ""
+
+
+def _normalize_structured_citation(citation: str) -> str:
+    parts = citation.strip().split()
+    if not parts:
+        return ""
+    family = parts[0].upper()
+    if len(parts) >= 3 and parts[1].lower() == "part":
+        return " ".join([family, parts[2], *parts[3:]]).strip()
+    return " ".join([family, *parts[1:]]).strip()
+
+
+def _extract_broad_prefix(citation: str) -> str:
+    parts = _normalize_structured_citation(citation).split()
+    if len(parts) < 2:
+        return ""
+    family, token = parts[0].upper(), parts[1]
+    if family in {"CASR", "MOS"} and re.fullmatch(r"\d+(?:\.)?", token):
+        return f"{family} {token.rstrip('.') }."
+    if family == "CAR" and re.fullmatch(r"\d+(?:\.)?", token):
+        return f"{family} {token.rstrip('.') }."
+    return ""
+
+
+def _extract_family_part_prefix(citation: str) -> str:
+    parts = _normalize_structured_citation(citation).split()
+    if len(parts) < 2:
+        return ""
+    family, token = parts[0].upper(), parts[1]
+    if family == "AIP":
+        return _extract_chapter_prefix(citation)
+    if family in {"CASR", "MOS", "CAO"} and "." in token:
+        return f"{family} {token.split('.', 1)[0]}."
+    if family in {"CAR", "CAA"}:
+        return f"{family} {token}"
+    return ""
+
+
+def _citation_matches_family_part(citation: str, prefix: str) -> bool:
+    lowered = citation.lower()
+    prefix_lower = prefix.lower()
+    if prefix_lower.endswith("."):
+        return lowered.startswith(prefix_lower)
+    return (
+        lowered == prefix_lower
+        or lowered.startswith(prefix_lower + ".")
+        or lowered.startswith(prefix_lower + "(")
+        or lowered.startswith(prefix_lower + " ")
+    )
 
 
 def _extract_section_ids(raw: dict) -> list[str]:

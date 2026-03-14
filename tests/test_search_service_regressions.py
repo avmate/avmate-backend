@@ -56,16 +56,24 @@ class _FakeCanonicalStore:
         *,
         sections: list[dict[str, Any]],
         exact_prefix_map: dict[str, list[str]] | None = None,
+        exact_tree_map: dict[str, list[str]] | None = None,
         bm25_results: list[tuple[str, float]] | None = None,
     ) -> None:
         self._sections_by_id = {section["section_id"]: section for section in sections}
         self._exact_prefix_map = exact_prefix_map or {}
+        self._exact_tree_map = exact_tree_map or {}
         self._bm25_results = bm25_results or []
         self.bm25_calls: list[dict[str, Any]] = []
 
     def get_sections_by_citation_prefix(self, prefix: str, *, limit: int = 20) -> list[dict[str, Any]]:
         section_ids = self._exact_prefix_map.get(prefix, [])[:limit]
         return [self._sections_by_id[section_id] for section_id in section_ids]
+
+    def get_sections_by_citation_tree(self, citation: str, *, limit: int = 20) -> list[dict[str, Any]]:
+        section_ids = self._exact_tree_map.get(citation)
+        if section_ids is None:
+            section_ids = self._exact_prefix_map.get(citation, [])
+        return [self._sections_by_id[section_id] for section_id in section_ids[:limit]]
 
     def search_sections_bm25(
         self,
@@ -110,7 +118,7 @@ class SearchServiceRegressionTests(unittest.TestCase):
             ),
             canonical_store=_FakeCanonicalStore(
                 sections=[exact, unrelated],
-                exact_prefix_map={"CASR 61.395": ["sec-exact"]},
+                exact_tree_map={"CASR 61.395": ["sec-exact"]},
             ),
         )
 
@@ -261,6 +269,7 @@ class SearchServiceRegressionTests(unittest.TestCase):
             canonical_store=_FakeCanonicalStore(
                 sections=[low_flying, unrelated],
                 exact_prefix_map={"CASR 91.267": ["sec-low-flying"]},
+                exact_tree_map={"CASR 91.267": ["sec-low-flying"]},
             ),
         )
 
@@ -297,6 +306,10 @@ class SearchServiceRegressionTests(unittest.TestCase):
             canonical_store=_FakeCanonicalStore(
                 sections=[vmc, rule, unrelated],
                 exact_prefix_map={
+                    "MOS 2.07": ["sec-vmc"],
+                    "CASR 91.280": ["sec-casr-vmc"],
+                },
+                exact_tree_map={
                     "MOS 2.07": ["sec-vmc"],
                     "CASR 91.280": ["sec-casr-vmc"],
                 },
@@ -458,6 +471,126 @@ class SearchServiceRegressionTests(unittest.TestCase):
 
         self.assertEqual(response.references[0].title, "AIP GEN 2.2 1 Aerodrome Reference Point (ARP)")
         self.assertEqual(response.citations, ["AIP GEN 2.2 1"])
+
+    def test_search_treats_casr_part_specific_section_as_exact_citation(self) -> None:
+        exact = _section(
+            "sec-61215",
+            "CASR 61.215",
+            text="Section 61.215 operative text.",
+            regulation_type="CASR",
+        )
+        unrelated = _section(
+            "sec-202320",
+            "CASR 202.320",
+            text="Unrelated provision.",
+            regulation_type="CASR",
+        )
+        service = SearchService(
+            embeddings=_FakeEmbeddings(),
+            vector_store=_FakeVectorStore(
+                [{"metadatas": [[{"section_id": "sec-202320"}]], "distances": [[0.01]]}]
+            ),
+            canonical_store=_FakeCanonicalStore(
+                sections=[exact, unrelated],
+                exact_tree_map={"CASR 61.215": ["sec-61215"]},
+            ),
+        )
+
+        response = service.search("What does CASR Part 61.215 require?", top_k=3)
+
+        self.assertEqual(response.references[0].citation, "CASR 61.215")
+
+    def test_search_uses_exact_tree_lookup_for_car_single_number_section(self) -> None:
+        exact = _section(
+            "sec-car12",
+            "CAR 12",
+            text="Section 12 operative text.",
+            regulation_type="CAR",
+        )
+        broad_prefix_collision = _section(
+            "sec-car120",
+            "CAR 120",
+            text="Section 120 unrelated text.",
+            regulation_type="CAR",
+        )
+        service = SearchService(
+            embeddings=_FakeEmbeddings(),
+            vector_store=_FakeVectorStore(
+                [{"metadatas": [[{"section_id": "sec-car120"}]], "distances": [[0.01]]}]
+            ),
+            canonical_store=_FakeCanonicalStore(
+                sections=[exact, broad_prefix_collision],
+                exact_tree_map={"CAR 12": ["sec-car12"]},
+            ),
+        )
+
+        response = service.search("What does CAR 12 require?", top_k=3)
+
+        self.assertEqual(response.references[0].citation, "CAR 12")
+
+    def test_search_routes_simple_day_vfr_fuel_query_to_part91_mos(self) -> None:
+        fuel = _section(
+            "sec-fuel",
+            "MOS 19.02",
+            text="Fuel requirements for a VFR flight by day include final reserve fuel.",
+            regulation_type="MOS",
+        )
+        training = _section(
+            "sec-training",
+            "MOS 1.7.6",
+            text="Training unit includes determining minimum fuel required.",
+            regulation_type="MOS",
+        )
+        vector_store = _FakeVectorStore(
+            [{"metadatas": [[{"section_id": "sec-training"}]], "distances": [[0.01]]}]
+        )
+        service = SearchService(
+            embeddings=_FakeEmbeddings(),
+            vector_store=vector_store,
+            canonical_store=_FakeCanonicalStore(
+                sections=[fuel, training],
+                exact_prefix_map={"MOS 19.02": ["sec-fuel"]},
+                exact_tree_map={"MOS 19.02": ["sec-fuel"]},
+            ),
+        )
+
+        response = service.search("Fuel requirements day VFR flight", top_k=3)
+
+        self.assertEqual(response.references[0].citation, "MOS 19.02")
+
+    def test_search_keeps_broad_casr_part_query_within_requested_part(self) -> None:
+        right = _section(
+            "sec-61005",
+            "CASR 61.005",
+            text="Applicability of Part 61.",
+            regulation_type="CASR",
+        )
+        wrong = _section(
+            "sec-25011",
+            "CASR 25.011",
+            text="Unrelated Part 25 rule.",
+            regulation_type="CASR",
+        )
+        service = SearchService(
+            embeddings=_FakeEmbeddings(),
+            vector_store=_FakeVectorStore(
+                [
+                    {
+                        "metadatas": [[{"section_id": "sec-25011"}, {"section_id": "sec-61005"}]],
+                        "distances": [[0.02, 0.03]],
+                    }
+                ]
+            ),
+            canonical_store=_FakeCanonicalStore(
+                sections=[right, wrong],
+                exact_prefix_map={"CASR 61.": ["sec-61005"]},
+            ),
+        )
+
+        response = service.search("What does CASR Part 61 require?", top_k=3)
+
+        self.assertEqual(response.references[0].citation, "CASR 61.005")
+        self.assertTrue(all(ref.citation.startswith("CASR 61.") for ref in response.references))
 
 
 if __name__ == "__main__":
