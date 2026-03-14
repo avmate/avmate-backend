@@ -8,6 +8,7 @@ from stress_random_queries import (
     _load_query_bank_cases,
     _is_out_of_scope_case,
     citation_matches_expected,
+    citation_family_matches_regulation_type,
     is_precise_citation,
     normalize_expected_citation,
 )
@@ -60,6 +61,11 @@ class StressRandomQueriesTests(unittest.TestCase):
             cases = _load_query_bank_cases(str(path), supported_citations={"CASR 61.215"})
             self.assertEqual(len(cases), 1)
             self.assertEqual(cases[0].expected_citation, "")
+
+    def test_rejects_cross_family_seed_citations(self) -> None:
+        self.assertFalse(citation_family_matches_regulation_type("CASR 4.2", "Manual"))
+        self.assertFalse(citation_family_matches_regulation_type("CASR 1998.", "MOS"))
+        self.assertTrue(citation_family_matches_regulation_type("MOS Schedule 4 Section L", "MOS"))
 
 
 if __name__ == "__main__":

@@ -157,6 +157,19 @@ def normalize_spaces(value: str) -> str:
     return " ".join((value or "").split())
 
 
+def citation_family_matches_regulation_type(citation: str, regulation_type: str) -> bool:
+    normalized = normalize_spaces(citation)
+    if not normalized:
+        return False
+    family = normalized.split()[0].upper()
+    expected = normalize_spaces(regulation_type).upper()
+    if expected == "AIP":
+        return family == "AIP"
+    if expected in {"CASR", "CAR", "CAO", "MOS", "CAA"}:
+        return family == expected
+    return False
+
+
 def is_precise_citation(citation: str, regulation_type_hint: str = "") -> bool:
     normalized = normalize_spaces(citation)
     if not normalized:
@@ -300,6 +313,8 @@ def _load_catalog_section_seeds() -> list[SectionSeed]:
                 regulation_type = normalize_spaces(document.get("type", "UNKNOWN")).upper()
                 page_ref = normalize_spaces(section.get("page_ref", ""))
                 if not citation:
+                    continue
+                if not citation_family_matches_regulation_type(citation, regulation_type):
                     continue
                 if not is_precise_citation(
                     expected_output_citation(
@@ -465,6 +480,8 @@ def load_usable_sections() -> list[RegulationSection | SectionSeed]:
     usable: list[RegulationSection | SectionSeed] = []
     for row in rows:
         if not row.citation or not row.text:
+            continue
+        if not citation_family_matches_regulation_type(row.citation, row.regulation_type):
             continue
         expected = expected_output_citation(row)
         if not expected:
