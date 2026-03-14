@@ -273,6 +273,8 @@ def _is_specific_citation(citation: str) -> bool:
     family = parts[0].upper()
     if family == "AIP":
         return len(parts) >= 4
+    if family == "MOS" and len(parts) >= 3 and parts[1].lower() == "schedule":
+        return True
     if len(parts) >= 2:
         token = parts[1]
         if family in {"CAR", "CAA"}:

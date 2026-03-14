@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from stress_random_queries import (
+    _load_query_bank_cases,
     _is_out_of_scope_case,
     citation_matches_expected,
     is_precise_citation,
@@ -45,6 +48,18 @@ class StressRandomQueriesTests(unittest.TestCase):
     def test_allows_descendant_match_for_broad_part_expectation(self) -> None:
         self.assertTrue(citation_matches_expected("CASR 26", "CASR 26.001"))
         self.assertTrue(citation_matches_expected("CAR Part 5", "CAR 5.02"))
+
+    def test_query_bank_clears_unsupported_exact_hint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "bank.csv"
+            path.write_text(
+                "Question,Primary Reference\n"
+                "\"What does CASR 14.5.2 require?\",CASR 14.5.2\n",
+                encoding="utf-8",
+            )
+            cases = _load_query_bank_cases(str(path), supported_citations={"CASR 61.215"})
+            self.assertEqual(len(cases), 1)
+            self.assertEqual(cases[0].expected_citation, "")
 
 
 if __name__ == "__main__":

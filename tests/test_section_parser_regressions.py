@@ -17,6 +17,11 @@ class SectionParserRegressionTests(unittest.TestCase):
         self.assertIn("AIP 1.4.1", citations)
         self.assertIn("AIP 5.3", citations)
 
+    def test_extract_citations_preserves_mos_schedule_citations(self) -> None:
+        query = "Explain MOS Schedule 4 Appendix 1.5 in plain english."
+        citations = extract_citations(query)
+        self.assertIn("MOS Schedule 4 Appendix 1.5", citations)
+
     def test_extract_citations_ignores_non_numeric_cao_car_tokens(self) -> None:
         query = "CAO level standards and CAR do not apply."
         citations = extract_citations(query)

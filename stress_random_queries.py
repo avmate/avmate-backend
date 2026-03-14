@@ -405,6 +405,10 @@ def _is_out_of_scope_case(reference_hint: str, category: str, question: str = ""
 
 
 def load_query_bank_cases(paths_csv: str) -> list[QueryCase]:
+    return _load_query_bank_cases(paths_csv)
+
+
+def _load_query_bank_cases(paths_csv: str, supported_citations: set[str] | None = None) -> list[QueryCase]:
     paths = [Path(item.strip()) for item in paths_csv.split(",") if item.strip()]
     cases: list[QueryCase] = []
     for path in paths:
@@ -428,6 +432,12 @@ def load_query_bank_cases(paths_csv: str) -> list[QueryCase]:
                     or ""
                 )
                 expected_citation = infer_expected_citation_from_hint(hint)
+                if (
+                    expected_citation
+                    and supported_citations is not None
+                    and not any(citation_matches_expected(expected_citation, candidate) for candidate in supported_citations)
+                ):
+                    expected_citation = ""
                 regulation_type = ""
                 if expected_citation:
                     regulation_type = expected_citation.split()[0].upper()
@@ -447,7 +457,7 @@ def load_query_bank_cases(paths_csv: str) -> list[QueryCase]:
     return cases
 
 
-def load_random_sections(count: int) -> list[RegulationSection | SectionSeed]:
+def load_usable_sections() -> list[RegulationSection | SectionSeed]:
     with session_scope() as session:
         rows = session.scalars(
             select(RegulationSection).where(RegulationSection.citation.is_not(None), RegulationSection.text.is_not(None))
@@ -463,8 +473,24 @@ def load_random_sections(count: int) -> list[RegulationSection | SectionSeed]:
             continue
         usable.append(row)
     if not usable:
-        catalog_rows = _load_catalog_section_seeds()
-        usable.extend(catalog_rows)
+        usable.extend(_load_catalog_section_seeds())
+    return usable
+
+
+def build_supported_citation_set(rows: list[RegulationSection | SectionSeed]) -> set[str]:
+    citations: set[str] = set()
+    for row in rows:
+        expected = normalize_expected_citation(expected_output_citation(row))
+        if expected:
+            citations.add(expected)
+        raw = normalize_expected_citation(normalize_spaces(getattr(row, "citation", "")))
+        if raw:
+            citations.add(raw)
+    return citations
+
+
+def load_random_sections(count: int, usable: list[RegulationSection | SectionSeed] | None = None) -> list[RegulationSection | SectionSeed]:
+    usable = list(usable or load_usable_sections())
     if not usable:
         return []
 
@@ -661,8 +687,10 @@ def main() -> int:
     print(f"Minimum per manual: {MIN_QUERIES_PER_MANUAL}")
     print(f"Query banks: {QUERY_BANK_PATHS}")
 
-    bank_cases = load_query_bank_cases(QUERY_BANK_PATHS)
-    sampled_rows = load_random_sections(QUERY_COUNT)
+    usable_rows = load_usable_sections()
+    supported_citations = build_supported_citation_set(usable_rows)
+    bank_cases = _load_query_bank_cases(QUERY_BANK_PATHS, supported_citations)
+    sampled_rows = load_random_sections(QUERY_COUNT, usable_rows)
     manuals = sorted({normalize_spaces(row.source_file) or "unknown_source" for row in sampled_rows})
     if sampled_rows:
         print(f"Manuals covered in sample set: {len(manuals)}")

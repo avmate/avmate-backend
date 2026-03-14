@@ -157,6 +157,35 @@ class SearchServiceRegressionTests(unittest.TestCase):
         self.assertEqual(response.references[0].citation, "CAR 5.09")
         self.assertEqual(response.references[0].score, 1.0)
 
+    def test_search_treats_mos_schedule_citation_as_exact(self) -> None:
+        exact = _section(
+            "sec-mos-schedule",
+            "MOS Schedule 4 Appendix 1.5",
+            text="Schedule 4 appendix content for a specific Part 61 standard.",
+            regulation_type="MOS",
+        )
+        unrelated = _section(
+            "sec-mos-other",
+            "MOS Schedule 4 Appendix 2.1",
+            text="Different appendix.",
+            regulation_type="MOS",
+        )
+        service = SearchService(
+            embeddings=_FakeEmbeddings(),
+            vector_store=_FakeVectorStore(
+                [{"metadatas": [[{"section_id": "sec-mos-other"}]], "distances": [[0.01]]}]
+            ),
+            canonical_store=_FakeCanonicalStore(
+                sections=[exact, unrelated],
+                exact_tree_map={"MOS Schedule 4 Appendix 1.5": ["sec-mos-schedule"]},
+            ),
+        )
+
+        response = service.search("Explain MOS Schedule 4 Appendix 1.5 in plain english.", top_k=3)
+
+        self.assertEqual(response.references[0].citation, "MOS Schedule 4 Appendix 1.5")
+        self.assertEqual(response.references[0].score, 1.0)
+
     def test_search_uses_bm25_when_semantic_results_are_empty(self) -> None:
         target = _section(
             "sec-bm25",
