@@ -279,12 +279,12 @@ def _split_aip_sections(text: str) -> list[dict]:
 
         label = match.group("label")
         if len(section_text) < 200:
-            # Parent stub: synthesize by aggregating immediate children's text.
+            # Parent stub: include only if it has children (so citation lookup works),
+            # but keep the original short text — don't aggregate child text, which would
+            # create semantic pollution in vector search and outrank specific child sections.
             child_prefix = label + "."
-            child_texts = [t for lbl, t in label_to_text.items() if lbl.startswith(child_prefix)]
-            if not child_texts:
+            if not any(lbl.startswith(child_prefix) for lbl in label_to_text):
                 continue
-            section_text = section_text + "\n\n" + "\n\n".join(child_texts)
 
         heading = " ".join(match.group("heading").split()).strip(" .:-")
         page_ref = extract_page_ref(section_text, full_text=text, section_start=start)
