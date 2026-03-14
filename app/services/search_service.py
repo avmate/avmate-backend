@@ -371,6 +371,48 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
             "preferred_citations": ["CASR 91.925", "CASR 91.930"],
         }
 
+    # VFR weather minima (general) → AIP ENR 1.1
+    # Guard: don't match queries already routed by the class-G VMC rule above
+    if any(
+        term in normalized
+        for term in (
+            "minimum weather",
+            "vfr weather",
+            "vfr met minima",
+            "vfr meteorological",
+            "minimum visibility vfr",
+            "weather minima vfr",
+        )
+    ) and "class g" not in normalized:
+        return {
+            "regulation_hint": "AIP",
+            "search_text": (
+                "AIP ENR 1.1 VFR meteorological minima visibility cloud clearance "
+                "VMC flight under VFR day night"
+            ),
+            "preferred_citations": ["AIP ENR 1.1 2.8.2.2", "AIP ENR 1.1 4.2.1"],
+        }
+
+    # Instrument approach procedures / approach minima → AIP ENR 1.5
+    if any(
+        term in normalized
+        for term in (
+            "instrument approach",
+            "ifr approach",
+            "approach procedure",
+            "approach minima",
+            "approach chart",
+        )
+    ):
+        return {
+            "regulation_hint": "AIP",
+            "search_text": (
+                "AIP ENR 1.5 instrument approach procedures minima ceiling visibility "
+                "alternate aerodrome approach chart"
+            ),
+            "preferred_citations": ["AIP ENR 1.5 6.1.1", "AIP ENR 1.5 1.6"],
+        }
+
     return None
 
 
