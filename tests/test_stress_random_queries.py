@@ -38,6 +38,7 @@ class StressRandomQueriesTests(unittest.TestCase):
 
     def test_accepts_structured_aip_citations(self) -> None:
         self.assertTrue(is_precise_citation("AIP ENR 1.5 6.2.1", "AIP"))
+        self.assertTrue(is_precise_citation("AIP GEN 1.2.2", "AIP"))
 
     def test_accepts_mos_schedule_citations(self) -> None:
         self.assertTrue(is_precise_citation("MOS Schedule 4 Section 2", "MOS"))

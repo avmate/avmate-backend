@@ -45,7 +45,7 @@ NON_AIP_CITATION_PATTERN = re.compile(
     re.IGNORECASE,
 )
 AIP_STRUCTURED_CITATION_PATTERN = re.compile(
-    r"^AIP\s+(?:GEN|ENR|AD)\s+\d+(?:\.\d+)?(?:\s+\d+(?:\.\d+){0,4})?$",
+    r"^AIP\s+(?:GEN|ENR|AD)\s+(?:\d+(?:\.\d+){1,4}|\d+(?:\.\d+)?(?:\s+\d+(?:\.\d+){0,4})?)$",
     re.IGNORECASE,
 )
 AIP_OUTPUT_CITATION_PATTERN = re.compile(
