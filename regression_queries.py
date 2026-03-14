@@ -74,7 +74,7 @@ TEST_CASES = [
     ),
     ExpectedQuery(
         query="What is the fuel reserve requirement for a VFR day flight?",
-        expected_citation="AIP ENR 1",  # fuel reqs in AIP ENR 1.1 or ENR 1.14
+        expected_citation="MOS 19.02",
         expected_phrase="fuel",
     ),
     ExpectedQuery(

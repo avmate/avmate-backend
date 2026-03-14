@@ -62,7 +62,7 @@ class SearchService:
             if not _is_specific_citation(citation):
                 continue
             for sec in self._canonical_store.get_sections_by_citation_tree(citation):
-                if sec["section_id"] not in seen_ids:
+                if _is_candidate_family_consistent(sec) and sec["section_id"] not in seen_ids:
                     exact_candidates.append((1.0, sec))
                     seen_ids.add(sec["section_id"])
         if query_route:
@@ -140,6 +140,8 @@ class SearchService:
             section = sections_by_id.get(sid)
             if not section:
                 continue
+            if not _is_candidate_family_consistent(section):
+                continue
             sem_score = max(0.0, 1.0 - float(dist))
             score = max(sem_score, bm25_scores.get(sid, 0.0))
             semantic_candidates.append((score, section))
@@ -150,7 +152,7 @@ class SearchService:
             if sid in seen_ids or sid in merged_sids:
                 continue
             section = sections_by_id.get(sid)
-            if section:
+            if section and _is_candidate_family_consistent(section):
                 semantic_candidates.append((bm25_score, section))
                 merged_sids.add(sid)
 
@@ -274,9 +276,17 @@ def _is_specific_citation(citation: str) -> bool:
     if len(parts) >= 2:
         token = parts[1]
         if family in {"CAR", "CAA"}:
-            return bool(re.fullmatch(r"\d+[A-Za-z]?(?:\([0-9A-Za-z]+\))?", token))
+            return "." in token or bool(re.fullmatch(r"\d+[A-Za-z]?(?:\([0-9A-Za-z]+\))?", token))
         return "." in token or "(" in token
     return False
+
+
+def _is_candidate_family_consistent(section: dict) -> bool:
+    citation_family = _detect_family(section.get("citation", ""))
+    if not citation_family:
+        return True
+    section_family = (section.get("regulation_type") or "").strip().upper()
+    return not section_family or citation_family == section_family
 
 
 def _collect_prefix_candidates(

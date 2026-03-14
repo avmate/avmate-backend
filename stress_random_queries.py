@@ -44,8 +44,16 @@ NON_AIP_CITATION_PATTERN = re.compile(
     r"^(?:CASR|CAR|CAO|MOS|CAA)\s+(?:Part\s+)?[0-9]+[0-9A-Za-z.\-]*(?:\([0-9A-Za-z]+\))*$|^CAO\s+DOC\s+[0-9A-Za-z.\-]+$",
     re.IGNORECASE,
 )
+AIP_STRUCTURED_CITATION_PATTERN = re.compile(
+    r"^AIP\s+(?:GEN|ENR|AD)\s+\d+(?:\.\d+)?(?:\s+\d+(?:\.\d+){0,4})?$",
+    re.IGNORECASE,
+)
 AIP_OUTPUT_CITATION_PATTERN = re.compile(
     r"^AIP\s+(?:GEN|ENR|AD|AIP)\s+\d+(?:\.\d+)?\s*-\s*\(?\d+\)?\s+subsection\s+[0-9]+(?:\.[0-9]+){1,4}(?:\.\s*Table\s+\d+(?:\.\d+)*)?$",
+    re.IGNORECASE,
+)
+MOS_SCHEDULE_CITATION_PATTERN = re.compile(
+    r"^MOS\s+Schedule\s+[0-9IVX]+(?:\s+(?:Section|Appendix)\s+[A-Z0-9.]+|\s+[A-Z0-9-]+)$",
     re.IGNORECASE,
 )
 SUBSECTION_PATTERN = re.compile(r"\bAIP\s+([0-9]+(?:\.[0-9]+){1,4})\b", re.IGNORECASE)
@@ -155,9 +163,36 @@ def is_precise_citation(citation: str, regulation_type_hint: str = "") -> bool:
         return False
     if " subsection " in normalized.lower():
         return bool(AIP_OUTPUT_CITATION_PATTERN.match(normalized))
+    if AIP_STRUCTURED_CITATION_PATTERN.match(normalized):
+        return True
+    if MOS_SCHEDULE_CITATION_PATTERN.match(normalized):
+        return True
     if regulation_type_hint.upper() == "AIP":
         return False
     return bool(NON_AIP_CITATION_PATTERN.match(normalized))
+
+
+def normalize_expected_citation(citation: str) -> str:
+    normalized = normalize_spaces(citation)
+    if not normalized:
+        return ""
+    parts = normalized.split()
+    if len(parts) >= 3 and parts[0].upper() in {"CASR", "CAR", "CAO", "MOS", "CAA"} and parts[1].lower() == "part":
+        normalized = " ".join([parts[0].upper(), parts[2], *parts[3:]]).strip()
+    return normalized.rstrip(".")
+
+
+def citation_matches_expected(expected: str, citation: str) -> bool:
+    exp = normalize_expected_citation(expected)
+    got = normalize_expected_citation(citation)
+    if not exp or not got:
+        return False
+    return (
+        got == exp
+        or got.startswith(exp + ".")
+        or got.startswith(exp + "(")
+        or got.startswith(exp + " ")
+    )
 
 
 def expected_output_citation(row: RegulationSection) -> str:
@@ -314,10 +349,10 @@ def infer_expected_citation_from_hint(hint: str) -> str:
         return ""
     candidate = normalize_spaces(match.group(0))
     if candidate.upper().startswith("AIP "):
-        return candidate
+        return normalize_expected_citation(candidate)
     if candidate.lower().startswith("part "):
         return ""
-    return candidate
+    return normalize_expected_citation(candidate)
 
 
 def _hint_matches_citations(hint: str, citations: list[str]) -> bool:
@@ -330,7 +365,7 @@ def _hint_matches_citations(hint: str, citations: list[str]) -> bool:
     citations_lower = [citation.lower() for citation in citations]
     expected_citation = infer_expected_citation_from_hint(hint).lower()
     if expected_citation:
-        return expected_citation in citations_lower
+        return any(citation_matches_expected(expected_citation, citation) for citation in citations)
 
     if "aip" in normalized_hint and any(citation.startswith("aip ") for citation in citations_lower):
         return True
@@ -550,7 +585,7 @@ def query_api(case: QueryCase) -> QueryResult:
         )
 
     hint_match = _hint_matches_citations(case.expected_hint or case.expected_citation, citations)
-    if case.expected_citation and case.expected_citation not in citations:
+    if case.expected_citation and not any(citation_matches_expected(case.expected_citation, citation) for citation in citations):
         if case.is_bank_case:
             return QueryResult(
                 ok=True,

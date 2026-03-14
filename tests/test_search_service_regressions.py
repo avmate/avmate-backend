@@ -128,6 +128,35 @@ class SearchServiceRegressionTests(unittest.TestCase):
         self.assertEqual(response.references[0].score, 1.0)
         self.assertIn("CASR 61.395", response.citations)
 
+    def test_search_treats_decimal_car_citation_as_exact(self) -> None:
+        exact = _section(
+            "sec-car-decimal",
+            "CAR 5.09",
+            text="Specific CAR Part 5 requirement.",
+            regulation_type="CAR",
+        )
+        unrelated = _section(
+            "sec-car-broad",
+            "CAR 124",
+            text="Unrelated CAR rule.",
+            regulation_type="CAR",
+        )
+        service = SearchService(
+            embeddings=_FakeEmbeddings(),
+            vector_store=_FakeVectorStore(
+                [{"metadatas": [[{"section_id": "sec-car-broad"}]], "distances": [[0.01]]}]
+            ),
+            canonical_store=_FakeCanonicalStore(
+                sections=[exact, unrelated],
+                exact_tree_map={"CAR 5.09": ["sec-car-decimal"]},
+            ),
+        )
+
+        response = service.search("Summarise CAR 5.09", top_k=3)
+
+        self.assertEqual(response.references[0].citation, "CAR 5.09")
+        self.assertEqual(response.references[0].score, 1.0)
+
     def test_search_uses_bm25_when_semantic_results_are_empty(self) -> None:
         target = _section(
             "sec-bm25",
@@ -246,6 +275,37 @@ class SearchServiceRegressionTests(unittest.TestCase):
         self.assertEqual(response.references[0].citation, "AIP ENR 1.1 4.8.1")
         self.assertEqual(vector_store.calls[0]["where"], {"regulation_type": {"$eq": "AIP"}})
         self.assertEqual(canonical_store.bm25_calls[0]["regulation_type"], "AIP")
+
+    def test_search_filters_cross_family_bogus_citations(self) -> None:
+        bogus = _section(
+            "sec-bogus",
+            "CASR 1998.",
+            text="Misparsed MOS preamble that should not outrank real CASR content.",
+            title="CASR 1998.",
+            regulation_type="MOS",
+        )
+        real = _section(
+            "sec-real",
+            "CASR 1.001",
+            text="Preliminary CASR provision.",
+            regulation_type="CASR",
+        )
+        service = SearchService(
+            embeddings=_FakeEmbeddings(),
+            vector_store=_FakeVectorStore(
+                [{"metadatas": [[{"section_id": "sec-bogus"}, {"section_id": "sec-real"}]], "distances": [[0.01, 0.2]]}]
+            ),
+            canonical_store=_FakeCanonicalStore(
+                sections=[bogus, real],
+                exact_prefix_map={"CASR 1.": ["sec-real"]},
+                bm25_results=[("sec-bogus", 0.8), ("sec-real", 0.6)],
+            ),
+        )
+
+        response = service.search("Summarise CASR 1998", top_k=3)
+
+        self.assertEqual(response.references[0].citation, "CASR 1.001")
+        self.assertNotIn("CASR 1998.", response.citations)
 
     def test_search_routes_low_flying_query_to_casr_91_267(self) -> None:
         low_flying = _section(
