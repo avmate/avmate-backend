@@ -948,6 +948,13 @@ class SearchServiceRegressionTests(unittest.TestCase):
         self.assertEqual(route["regulation_hint"], "CASR")
         self.assertEqual(route["preferred_citations"], ["CASR 61.970", "CASR 61.965", "CASR 61.980"])
 
+    def test_known_route_routes_foundational_general_operating_rules_query(self) -> None:
+        route = _route_known_query("Which document contains the foundational general operating rules for all Australian pilots?")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "CASR")
+        self.assertEqual(route["preferred_citations"], ["CASR 91.010", "CASR 91.015"])
+
     def test_known_route_routes_pic_logging_to_part_61(self) -> None:
         route = _route_known_query("What are the requirements to log pilot in command time?")
 

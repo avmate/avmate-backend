@@ -645,6 +645,19 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
         }
 
     if (
+        "general operating rules" in normalized
+        and any(term in normalized for term in ("all australian pilots", "foundational", "which document", "contains"))
+    ):
+        return {
+            "regulation_hint": "CASR",
+            "search_text": (
+                "CASR 91.010 CASR 91.015 Part 91 general operating and flight rules "
+                "all Australian pilots application of Part 91"
+            ),
+            "preferred_citations": ["CASR 91.010", "CASR 91.015"],
+        }
+
+    if (
         ("performance based navigation" in normalized or re.search(r"\bpbn\b", normalized))
         and any(term in normalized for term in ("recency", "recent experience", "currency"))
     ):
