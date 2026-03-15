@@ -163,7 +163,7 @@ class SearchService:
                     self._canonical_store,
                     query_route["preferred_citations"],
                     seen_ids,
-                    query,
+                    query_route.get("search_text", query),
                 )
             )
 

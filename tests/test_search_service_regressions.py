@@ -699,6 +699,44 @@ class SearchServiceRegressionTests(unittest.TestCase):
         self.assertEqual(response.references[0].title, "AIP GEN 2.2 1 Aerodrome Elevation")
         self.assertEqual(len(response.references), 1)
 
+    def test_search_prefers_expanded_route_terms_for_shared_citation_definitions(self) -> None:
+        generic = _section(
+            "sec-generic",
+            "AIP GEN 2.2 1",
+            text="1. DEFINITIONS Active LAHSO Runway: The runway used during LAHSO for arriving aircraft.",
+            title="AIP GEN 2.2 1 DEFINITIONS",
+            regulation_type="AIP",
+        )
+        decision = _section(
+            "sec-da",
+            "AIP GEN 2.2 1",
+            text="Decision Altitude/Height (DA/H): A specified altitude or height in a 3D instrument approach operation.",
+            title="AIP GEN 2.2 1 Decision Altitude/Height (DA/H)",
+            regulation_type="AIP",
+        )
+        mda = _section(
+            "sec-mda",
+            "AIP GEN 2.2 1",
+            text="Minimum Descent Altitude/Height (MDA/H): A specified altitude or height in a 2D instrument approach operation.",
+            title="AIP GEN 2.2 1 Minimum Descent Altitude/Height (MDA/H)",
+            regulation_type="AIP",
+        )
+        service = SearchService(
+            embeddings=_FakeEmbeddings(),
+            vector_store=_FakeVectorStore([{"metadatas": [[]], "distances": [[]]}]),
+            canonical_store=_FakeCanonicalStore(
+                sections=[generic, decision, mda],
+                exact_prefix_map={"AIP GEN 2.2 1": ["sec-generic", "sec-da", "sec-mda"]},
+            ),
+        )
+
+        response = service.search("Define 'DA' vs 'MDA'.", top_k=5)
+
+        self.assertIn(response.references[0].title, {
+            "AIP GEN 2.2 1 Decision Altitude/Height (DA/H)",
+            "AIP GEN 2.2 1 Minimum Descent Altitude/Height (MDA/H)",
+        })
+
     def test_search_treats_casr_part_specific_section_as_exact_citation(self) -> None:
         exact = _section(
             "sec-61215",
