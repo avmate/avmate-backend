@@ -1,137 +1,169 @@
 ﻿question,category,primary_reference
-"Under CASR Part 91, what are the fuel requirements for a small aeroplane (fixed-wing)?","Part 91 MOS","Part 91 MOS Ch 19"
-"How do you determine if a flight is 'Air Transport' vs 'Aerial Work'?","Part 119/121/135","CASR 119.010"
-"What are the specific recency requirements for a PPL to carry passengers?","Part 61","CASR 61.395"
-"Define 'Competency' as described in the Part 61 Manual of Standards.","Part 61 MOS","MOS Schedule 2"
-"When must an IFR alternate be planned due to weather (CASA standards)?","AIP / Part 91 MOS","AIP ENR 1.1 / Part 91 MOS"
-"What are the minimum mandatory radio calls at a non-controlled aerodrome?","AIP / Part 91 MOS","AIP ENR 1.1 / Part 91 MOS"
-"Explain the '1% Rule' regarding medical incapacitation for pilots.","Aviation Medicine","CASA Medical Standards"
-"What are the requirements for a flight review under Part 61?","Part 61","CASR 61.400"
-"Define 'Safety Relevant' vs 'Medically Significant' conditions.","Flight Crew Licensing","CASA Licensing Manual"
-"What is the difference between a Part 141 and Part 142 flight training operator?","Licensing/Training","CASR 141 / 142"
-"How do you calculate the Lowest Safe Altitude (LSALT) for an IFR route?","AIP","AIP GEN 3.3"
-"What is the purpose of the 'Form 61-9TX' for examiners?","FEH / Admin","Flight Examiner Handbook"
-"Explain 'Threat and Error Management' (TEM) as assessed by an examiner.","FEH / MOS","MOS Schedule 2 / FEH"
-"What are the lighting requirements for a night VFR alternate aerodrome?","AIP / Part 91 MOS","AIP ENR 1.1 / Part 91 MOS"
-"Under what CAO (Civil Aviation Order) do you operate for fatigue management?","Fatigue Mgmt","CAO 48.1"
-"When can you fly in Class G airspace without a radio?","Part 91","CASR 91.625"
-"What documents must an operator keep in a 'Journey Log'?","Part 91","CASR 91.120"
-"Define 'Final Reserve Fuel' for a piston-engine aeroplane.","Part 91 MOS","Part 91 MOS Ch 19"
-"How does an examiner determine if a 'Non-Technical Skill' (NTS) failure constitutes a flight test fail?","FEH","FEH 4.4.6"
-"What are the cloud clearance requirements for Class C VFR flight above 10,000ft?","Part 91 MOS","Part 91 MOS Ch 2"
-"How is 'Critical Engine' defined for performance under Part 121?","Part 121","CASR 121 / MOS"
-"What is the 'Point of No Return' (PNR) and when is it mandatory?","Part 91 MOS","Part 91 MOS Ch 19"
-"What are the 'Standard Take-off Minima' for a multi-engine IFR aircraft?","AIP","AIP ENR 1.5"
-"When is a 'SARTIME' mandatory vs a flight notification?","AIP / Part 91","AIP / CASR 91"
-"Explain the use of 'Reduced Thrust' (Flex) under Part 121 performance.","Part 121 MOS","Part 121 MOS"
-"What is the 'Most Critical Point' (MCP) in flight planning?","Performance","AIP"
-"What are the privileges of a Flight Activity Endorsement (e.g., Aerobatics)?","Part 61","CASR 61.1140"
-"How long must a pilot wait after SCUBA diving before flying?","Aviation Medicine","AIP ENR 1.1"
-"What is the definition of 'Aerodrome Elevation' in the AIP?","AIP","AIP GEN 2.2"
-"When must you submit an Incident Report (ASIR) to the ATSB?","Safety/Act","Transport Safety Investigation Act"
-"What is a 'Type Rating' and when is it required vs a 'Class Rating'?","Part 61","CASR 61.010"
-"Define 'VFR on Top' and the regulatory restrictions in Australia.","AIP / Part 91","AIP ENR 1.1"
-"What are the requirements to carry a firearm on an aircraft under Part 91?","Part 91","CASR 91.160"
-"Explain the 'Balanced Field Length' concept in turbine operations.","Performance","MOS Part 121"
-"What are the 'Day VFR' flight visibility minimums in Class G below 3,000ft?","Part 91 MOS","Part 91 MOS Ch 2"
-"Define 'Cross-Country' for the purpose of CPL hour building.","Part 61","CASR 61.010"
-"What is the purpose of the 'Alpha' loading system used in CASA exams?","Performance","CASA Performance Manual"
-"How do you manage a 'Medical Flight Test' for an applicant with a disability?","FEH","Flight Examiner Handbook"
-"What is the 'Minimum Equipment List' (MEL) and how is it approved?","Part 91","CASR 91.035"
-"When two aircraft are on converging headings at the same altitude, which aircraft must give way?","Part 91 / AIP","AIP ENR 1.1"
-"What is the standard final reserve fuel requirement for a small aeroplane (MTOW < 5,700kg) under Part 91?","Part 91 MOS","MOS 19.02"
-"Within what distance of a non-controlled aerodrome is an aircraft considered to be 'in the vicinity'?","AIP / Part 91","AIP ENR 1.1"
-"If an authorised weather forecast cannot be obtained before departure, when must the pilot obtain one?","Part 91","CASR 91"
-"When must a pilot set the altimeter to the local QNH of a station?","AIP","AIP ENR 1.7"
-"Which of the following is NOT a mandatory item for a passenger safety briefing?","Part 91","CASR 91.565"
-"Under Part 91, who is responsible for ensuring the aircraft is not loaded with contaminated fuel?","Part 91","CASR 91"
-"In a head-on collision course, both aircraft should alter their heading to which direction?","Part 91 / AIP","AIP ENR 1.1"
-"What is the requirement for carrying an assistance animal in the passenger cabin?","Part 91","CASR 91"
-"What must a pilot do if they contravene a regulation during an emergency?","Part 91","CASR 91"
-"What does the radio phrase 'Reading you three' indicate about signal readability?","AIP","AIP GEN 3.4"
-"Which document contains the foundational general operating rules for all Australian pilots?","Part 91","CASR 91"
-"What is the standard turn direction in the circuit of a non-controlled aerodrome unless otherwise specified?","AIP / Part 91","AIP ENR 1.1"
-"To operate under Special VFR, what is the minimum visibility required for a helicopter?","AIP","AIP ENR 1.2"
-"When is a flight notification required for a VFR flight?","AIP / Part 91","AIP ENR 1.10 / CASR 91"
-"What is the final reserve fuel requirement for a helicopter conducting VFR operations by day?","Part 91 MOS","MOS 19.02"
-"Before take-off, what must the pilot in command check regarding the aircraft's weight and balance?","Part 91","CASR 91"
-"At what height must a pilot transition from QNH to standard pressure (1013.2 hPa)?","AIP","AIP ENR 1.7"
-"What are the day VMC requirements for Class G airspace at or below 3,000 ft AMSL?","Part 91 MOS","MOS 2.07"
-"When is a pilot required to wear a seatbelt?","Part 91","CASR 91"
-"What is the rule regarding the use of portable electronic devices (PEDs) during critical phases of flight?","Part 91","CASR 91"
-"What must be done if a flight instrument required for a flight is found to be unserviceable?","Part 91","CASR 91.925"
-"When must a pilot use supplemental oxygen in a non-pressurised aircraft?","Part 91 MOS","MOS 21"
-"What is the minimum lateral distance required from a cloud for VFR flight in Class C airspace?","Part 91 MOS","MOS 2.07"
-"Under what conditions can a pilot descend below the Lowest Safe Altitude (LSALT)?","AIP","AIP ENR 1.5"
-"What is the maximum speed for an aircraft in Class G airspace below 10,000 ft?","AIP","AIP ENR 1.4"
-"How must a pilot indicate they are in distress over the radio?","AIP","AIP GEN 3.4 / AIP ENR 1.14"
-"What is the required fuel for a flight to an alternate aerodrome?","Part 91 MOS","MOS 19"
-"Who is responsible for ensuring the aircraft’s maintenance release is valid?","Part 91","CASR 91"
-"What are the requirements for dropping articles from an aircraft in flight?","Part 91","CASR 91"
-"When is a life jacket required to be worn by all occupants of a single-engine aircraft?","Part 91","CASR 91"
-"What is the minimum vertical distance from clouds in Class E airspace?","Part 91 MOS","MOS 2.07"
-"What must a pilot do if they experience a radio failure in controlled airspace?","AIP","AIP ENR 1.1"
-"What are the specific rules for operating an aircraft in the vicinity of a whale?","Part 91","CASR 91"
-"What is the rule regarding taxiing an aircraft near another aircraft?","Part 91","CASR 91"
-"What is the minimum visibility for a day VFR take-off at a non-controlled aerodrome?","Part 91 MOS","MOS 2.07"
-"What are the requirements for 'Performance Based Navigation' (PBN) recency?","Part 61","CASR 61.870"
-"Explain the 'IMSAFE' checklist from a regulatory safety perspective.","Human Factors","CASA Advisory Circulars"
-"What are the transponder requirements in Class E airspace?","Part 91 MOS","Part 91 MOS Ch 14"
-"When is an oxygen mask mandatory for crew in unpressurised aircraft?","Part 91 MOS","Part 91 MOS Ch 21"
-"What is 'RAIM' and when must it be checked for an IFR flight?","AIP","AIP ENR 1.1"
-"Define 'TOSS' (Take-off Safety Speed).","Performance","CASA CPL Syllabus"
-"What is a 'Notice to Airmen' (NOTAM) and what are its categories?","AIP","AIP GEN 3.1"
-"How does the '1-in-60' rule apply to Australian navigation standards?","Navigation","CASA CADA Syllabus"
-"What is the 'Transition Altitude' and 'Transition Layer' in Australia?","AIP","AIP ENR 1.7"
-"Define 'RNP' vs 'RNAV'.","AIP / PBN","AIP GEN 1.5"
-"When can a pilot descend on the Glide Path (GP) during an ILS?","AIP","AIP ENR 1.5"
-"What is the purpose of a 'Stopway' on a runway?","AIP / Performance","AIP GEN 2.2"
-"Explain 'Asymmetric Blade Effect' and its relation to critical engines.","Aerodynamics","CASA CPL Syllabus"
-"What are the pilot's responsibilities for avoiding wake turbulence?","AIP","AIP ENR 1.1"
-"How do you calculate 'Pressure Height' vs 'Density Height'?","Performance","AIP"
-"What is 'CAVOK' and what conditions must be met for it?","AIP","AIP GEN 3.5"
-"When must a pilot use 'Mayday' vs 'Pan-Pan'?","AIP","AIP ENR 1.1"
-"Explain the 'Circle-to-Land' procedure and its limitations.","AIP","AIP ENR 1.5"
-"What is the 'Designated Aeromedical Examiner' (DAME)?","Aviation Medicine","CASR Part 67"
-"What are the 'Visual Docking Guidance Systems' (VDGS)?","AIP","AIP AD"
-"How does 'Mach Tuck' affect high-speed flight?","Aerodynamics","CASA ATPL Syllabus"
-"Define 'Vmc' (Minimum Control Speed) in a twin-engine aircraft.","Aerodynamics","CASA CPL Syllabus"
-"What is 'Dutch Roll' and how do aircraft prevent it?","Aerodynamics","CASA ATPL Syllabus"
-"Explain 'Specific Gravity' in the context of fuel loading.","Performance","CASA CFPA Syllabus"
-"What is the 'Intertropical Convergence Zone' (ITCZ) and its impact?","Meteorology","CASA CMET Syllabus"
-"Define 'Clearway' (CWY) and its use in performance.","Performance","AIP / MOS Part 121"
-"What is 'RVR' (Runway Visual Range) and how is it measured?","AIP","AIP GEN 3.5"
-"When must a pilot hold a 'Design Feature Endorsement' (e.g. Tailwheel)?","Part 61","CASR 61.755"
-"What is the 'Low Level' altimeter setting (QNH)?","AIP","AIP ENR 1.7"
-"Define 'Transition Level' in Australia.","AIP","AIP ENR 1.7"
-"Explain the 'Balanced Field' concept for turbine aircraft.","Performance","CASR 121 MOS"
-"What are the 'Holding' speeds for different altitudes?","AIP","AIP ENR 1.5"
-"When is a 'Security Identification Card' (ASIC) required?","Security","Aviation Transport Security Act"
-"What is 'P-Factor' and its impact on takeoff yaw?","Aerodynamics","CASA CADA Syllabus"
-"Define 'Vy' vs 'Vx'.","Performance","CASA CPL Syllabus"
-"What is the 'Critical Point' for a 4-engine aircraft?","Performance","CASA AFPA Syllabus"
-"How do you handle a 'GPWS' alert in a transport aircraft?","Emergency","Part 121 SOPs"
-"Define 'DA' vs 'MDA'.","AIP","AIP GEN 2.2"
-"What is a 'MOCA' and how is it different from 'MEA'?","AIP","AIP GEN 2.2"
-"What are the requirements for 'Simulated Instrument Flight'?","Part 91","CASR 91.315"
-"Define 'Standard Terminal Arrival' (STAR).","AIP","AIP ENR 1.5"
-"What is the '1-in-60' rule application for cross-track error?","Navigation","CASA CNAV Syllabus"
-"Explain 'Vortex Generators' and their aerodynamic purpose.","Aerodynamics","CASA CADA Syllabus"
-"What is 'Specific Range'?","Performance","CASA CFPA Syllabus"
-"Define 'EPR' (Engine Pressure Ratio).","Systems","CASA CSYA Syllabus"
-"What is the 'Visual Segment' of an IFR approach?","AIP","AIP ENR 1.5"
-"When must you declare 'Minimum Fuel' to ATC?","AIP / Part 91 MOS","AIP / Part 91 MOS"
-"What is 'RVSM' and its altitude requirements?","AIP","AIP ENR 1.1"
-"Define 'Vat' speed.","Performance","AIP GEN 2.2"
-"What are 'Krueger Flaps'?","Aerodynamics","CASA CADA Syllabus"
-"What is the 'Standard Instrument Departure' (SID)?","AIP","AIP ENR 1.5"
-"Explain 'Anhedral' wing design.","Aerodynamics","CASA CADA Syllabus"
-"What is 'Aspect Ratio' and its impact on drag?","Aerodynamics","CASA CADA Syllabus"
-"Define 'Service Ceiling' vs 'Absolute Ceiling'.","Performance","CASA CPL Syllabus"
-"What is 'TAS' and how is it calculated?","Navigation","AIP"
-"What is the 'Ground Effect'?","Aerodynamics","CASA CADA Syllabus"
-"Define 'Chord Line'.","Aerodynamics","CASA CADA Syllabus"
-"What is 'Angle of Attack'?","Aerodynamics","CASA CADA Syllabus"
-"What is 'Induced Drag'?","Aerodynamics","CASA CADA Syllabus"
-"Explain 'Para-Drag' (Parasite Drag).","Aerodynamics","CASA CADA Syllabus"
-"What is the 'Coffin Corner'?","Aerodynamics","CASA ATPL Syllabus"
+"Under CASR Part 91, what are the fuel requirements for a small aeroplane (fixed-wing)?",Part 91 MOS,Part 91 MOS Ch 19
+How do you determine if a flight is 'Air Transport' vs 'Aerial Work'?,Part 119/121/135,CASR 119.010
+What are the specific recency requirements for a PPL to carry passengers?,Part 61,CASR 61.395
+Define 'Competency' as described in the Part 61 Manual of Standards.,Part 61 MOS,MOS Schedule 2
+When must an IFR alternate be planned due to weather (CASA standards)?,AIP / Part 91 MOS,AIP ENR 1.1 / Part 91 MOS
+What are the minimum mandatory radio calls at a non-controlled aerodrome?,AIP / Part 91 MOS,AIP ENR 1.1 / Part 91 MOS
+Explain the '1% Rule' regarding medical incapacitation for pilots.,Aviation Medicine,CASA Medical Standards
+What are the requirements for a flight review under Part 61?,Part 61,CASR 61.400
+Define 'Safety Relevant' vs 'Medically Significant' conditions.,Flight Crew Licensing,CASA Licensing Manual
+What is the difference between a Part 141 and Part 142 flight training operator?,Licensing/Training,CASR 141 / 142
+How do you calculate the Lowest Safe Altitude (LSALT) for an IFR route?,AIP,AIP GEN 3.3
+What is the purpose of the 'Form 61-9TX' for examiners?,FEH / Admin,Flight Examiner Handbook
+Explain 'Threat and Error Management' (TEM) as assessed by an examiner.,FEH / MOS,MOS Schedule 2 / FEH
+What are the lighting requirements for a night VFR alternate aerodrome?,AIP / Part 91 MOS,AIP ENR 1.1 / Part 91 MOS
+Under what CAO (Civil Aviation Order) do you operate for fatigue management?,Fatigue Mgmt,CAO 48.1
+When can you fly in Class G airspace without a radio?,Part 91,CASR 91.625
+What documents must an operator keep in a 'Journey Log'?,Part 91,CASR 91.120
+Define 'Final Reserve Fuel' for a piston-engine aeroplane.,Part 91 MOS,Part 91 MOS Ch 19
+How does an examiner determine if a 'Non-Technical Skill' (NTS) failure constitutes a flight test fail?,FEH,FEH 4.4.6
+"What are the cloud clearance requirements for Class C VFR flight above 10,000ft?",Part 91 MOS,Part 91 MOS Ch 2
+How is 'Critical Engine' defined for performance under Part 121?,Part 121,CASR 121 / MOS
+What is the 'Point of No Return' (PNR) and when is it mandatory?,Part 91 MOS,Part 91 MOS Ch 19
+What are the 'Standard Take-off Minima' for a multi-engine IFR aircraft?,AIP,AIP ENR 1.5
+When is a 'SARTIME' mandatory vs a flight notification?,AIP / Part 91,AIP / CASR 91
+Explain the use of 'Reduced Thrust' (Flex) under Part 121 performance.,Part 121 MOS,Part 121 MOS
+What is the 'Most Critical Point' (MCP) in flight planning?,Performance,AIP
+"What are the privileges of a Flight Activity Endorsement (e.g., Aerobatics)?",Part 61,CASR 61.1140
+How long must a pilot wait after SCUBA diving before flying?,Aviation Medicine,AIP ENR 1.1
+What is the definition of 'Aerodrome Elevation' in the AIP?,AIP,AIP GEN 2.2
+When must you submit an Incident Report (ASIR) to the ATSB?,Safety/Act,Transport Safety Investigation Act
+What is a 'Type Rating' and when is it required vs a 'Class Rating'?,Part 61,CASR 61.010
+Define 'VFR on Top' and the regulatory restrictions in Australia.,AIP / Part 91,AIP ENR 1.1
+What are the requirements to carry a firearm on an aircraft under Part 91?,Part 91,CASR 91.160
+Explain the 'Balanced Field Length' concept in turbine operations.,Performance,MOS Part 121
+"What are the 'Day VFR' flight visibility minimums in Class G below 3,000ft?",Part 91 MOS,Part 91 MOS Ch 2
+Define 'Cross-Country' for the purpose of CPL hour building.,Part 61,CASR 61.010
+What is the purpose of the 'Alpha' loading system used in CASA exams?,Performance,CASA Performance Manual
+How do you manage a 'Medical Flight Test' for an applicant with a disability?,FEH,Flight Examiner Handbook
+What is the 'Minimum Equipment List' (MEL) and how is it approved?,Part 91,CASR 91.035
+"When two aircraft are on converging headings at the same altitude, which aircraft must give way?",Part 91 / AIP,AIP ENR 1.1
+"What is the standard final reserve fuel requirement for a small aeroplane (MTOW < 5,700kg) under Part 91?",Part 91 MOS,MOS 19.02
+Within what distance of a non-controlled aerodrome is an aircraft considered to be 'in the vicinity'?,AIP / Part 91,AIP ENR 1.1
+"If an authorised weather forecast cannot be obtained before departure, when must the pilot obtain one?",Part 91,CASR 91
+When must a pilot set the altimeter to the local QNH of a station?,AIP,AIP ENR 1.7
+Which of the following is NOT a mandatory item for a passenger safety briefing?,Part 91,CASR 91.565
+"Under Part 91, who is responsible for ensuring the aircraft is not loaded with contaminated fuel?",Part 91,CASR 91
+"In a head-on collision course, both aircraft should alter their heading to which direction?",Part 91 / AIP,AIP ENR 1.1
+What is the requirement for carrying an assistance animal in the passenger cabin?,Part 91,CASR 91
+What must a pilot do if they contravene a regulation during an emergency?,Part 91,CASR 91
+What does the radio phrase 'Reading you three' indicate about signal readability?,AIP,AIP GEN 3.4
+Which document contains the foundational general operating rules for all Australian pilots?,Part 91,CASR 91
+What is the standard turn direction in the circuit of a non-controlled aerodrome unless otherwise specified?,AIP / Part 91,AIP ENR 1.1
+"To operate under Special VFR, what is the minimum visibility required for a helicopter?",AIP,AIP ENR 1.2
+When is a flight notification required for a VFR flight?,AIP / Part 91,AIP ENR 1.10 / CASR 91
+What is the final reserve fuel requirement for a helicopter conducting VFR operations by day?,Part 91 MOS,MOS 19.02
+"Before take-off, what must the pilot in command check regarding the aircraft's weight and balance?",Part 91,CASR 91
+At what height must a pilot transition from QNH to standard pressure (1013.2 hPa)?,AIP,AIP ENR 1.7
+"What are the day VMC requirements for Class G airspace at or below 3,000 ft AMSL?",Part 91 MOS,MOS 2.07
+When is a pilot required to wear a seatbelt?,Part 91,CASR 91
+What is the rule regarding the use of portable electronic devices (PEDs) during critical phases of flight?,Part 91,CASR 91
+What must be done if a flight instrument required for a flight is found to be unserviceable?,Part 91,CASR 91.925
+When must a pilot use supplemental oxygen in a non-pressurised aircraft?,Part 91 MOS,MOS 21
+What is the minimum lateral distance required from a cloud for VFR flight in Class C airspace?,Part 91 MOS,MOS 2.07
+Under what conditions can a pilot descend below the Lowest Safe Altitude (LSALT)?,AIP,AIP ENR 1.5
+"What is the maximum speed for an aircraft in Class G airspace below 10,000 ft?",AIP,AIP ENR 1.4
+How must a pilot indicate they are in distress over the radio?,AIP,AIP GEN 3.4 / AIP ENR 1.14
+What is the required fuel for a flight to an alternate aerodrome?,Part 91 MOS,MOS 19
+Who is responsible for ensuring the aircraft’s maintenance release is valid?,Part 91,CASR 91
+What are the requirements for dropping articles from an aircraft in flight?,Part 91,CASR 91
+When is a life jacket required to be worn by all occupants of a single-engine aircraft?,Part 91,CASR 91
+What is the minimum vertical distance from clouds in Class E airspace?,Part 91 MOS,MOS 2.07
+What must a pilot do if they experience a radio failure in controlled airspace?,AIP,AIP ENR 1.1
+What are the specific rules for operating an aircraft in the vicinity of a whale?,Part 91,CASR 91
+What is the rule regarding taxiing an aircraft near another aircraft?,Part 91,CASR 91
+What is the minimum visibility for a day VFR take-off at a non-controlled aerodrome?,Part 91 MOS,MOS 2.07
+What are the requirements for 'Performance Based Navigation' (PBN) recency?,Part 61,CASR 61.870
+Explain the 'IMSAFE' checklist from a regulatory safety perspective.,Human Factors,CASA Advisory Circulars
+What are the transponder requirements in Class E airspace?,Part 91 MOS,Part 91 MOS Ch 14
+When is an oxygen mask mandatory for crew in unpressurised aircraft?,Part 91 MOS,Part 91 MOS Ch 21
+What is 'RAIM' and when must it be checked for an IFR flight?,AIP,AIP ENR 1.1
+Define 'TOSS' (Take-off Safety Speed).,Performance,CASA CPL Syllabus
+What is a 'Notice to Airmen' (NOTAM) and what are its categories?,AIP,AIP GEN 3.1
+How does the '1-in-60' rule apply to Australian navigation standards?,Navigation,CASA CADA Syllabus
+What is the 'Transition Altitude' and 'Transition Layer' in Australia?,AIP,AIP ENR 1.7
+Define 'RNP' vs 'RNAV'.,AIP / PBN,AIP GEN 1.5
+When can a pilot descend on the Glide Path (GP) during an ILS?,AIP,AIP ENR 1.5
+What is the purpose of a 'Stopway' on a runway?,AIP / Performance,AIP GEN 2.2
+Explain 'Asymmetric Blade Effect' and its relation to critical engines.,Aerodynamics,CASA CPL Syllabus
+What are the pilot's responsibilities for avoiding wake turbulence?,AIP,AIP ENR 1.1
+How do you calculate 'Pressure Height' vs 'Density Height'?,Performance,AIP
+What is 'CAVOK' and what conditions must be met for it?,AIP,AIP GEN 3.5
+When must a pilot use 'Mayday' vs 'Pan-Pan'?,AIP,AIP ENR 1.1
+Explain the 'Circle-to-Land' procedure and its limitations.,AIP,AIP ENR 1.5
+What is the 'Designated Aeromedical Examiner' (DAME)?,Aviation Medicine,CASR Part 67
+What are the 'Visual Docking Guidance Systems' (VDGS)?,AIP,AIP AD
+How does 'Mach Tuck' affect high-speed flight?,Aerodynamics,CASA ATPL Syllabus
+Define 'Vmc' (Minimum Control Speed) in a twin-engine aircraft.,Aerodynamics,CASA CPL Syllabus
+What is 'Dutch Roll' and how do aircraft prevent it?,Aerodynamics,CASA ATPL Syllabus
+Explain 'Specific Gravity' in the context of fuel loading.,Performance,CASA CFPA Syllabus
+What is the 'Intertropical Convergence Zone' (ITCZ) and its impact?,Meteorology,CASA CMET Syllabus
+Define 'Clearway' (CWY) and its use in performance.,Performance,AIP / MOS Part 121
+What is 'RVR' (Runway Visual Range) and how is it measured?,AIP,AIP GEN 3.5
+When must a pilot hold a 'Design Feature Endorsement' (e.g. Tailwheel)?,Part 61,CASR 61.755
+What is the 'Low Level' altimeter setting (QNH)?,AIP,AIP ENR 1.7
+Define 'Transition Level' in Australia.,AIP,AIP ENR 1.7
+Explain the 'Balanced Field' concept for turbine aircraft.,Performance,CASR 121 MOS
+What are the 'Holding' speeds for different altitudes?,AIP,AIP ENR 1.5
+When is a 'Security Identification Card' (ASIC) required?,Security,Aviation Transport Security Act
+What is 'P-Factor' and its impact on takeoff yaw?,Aerodynamics,CASA CADA Syllabus
+Define 'Vy' vs 'Vx'.,Performance,CASA CPL Syllabus
+What is the 'Critical Point' for a 4-engine aircraft?,Performance,CASA AFPA Syllabus
+How do you handle a 'GPWS' alert in a transport aircraft?,Emergency,Part 121 SOPs
+Define 'DA' vs 'MDA'.,AIP,AIP GEN 2.2
+What is a 'MOCA' and how is it different from 'MEA'?,AIP,AIP GEN 2.2
+What are the requirements for 'Simulated Instrument Flight'?,Part 91,CASR 91.315
+Define 'Standard Terminal Arrival' (STAR).,AIP,AIP ENR 1.5
+What is the '1-in-60' rule application for cross-track error?,Navigation,CASA CNAV Syllabus
+Explain 'Vortex Generators' and their aerodynamic purpose.,Aerodynamics,CASA CADA Syllabus
+What is 'Specific Range'?,Performance,CASA CFPA Syllabus
+Define 'EPR' (Engine Pressure Ratio).,Systems,CASA CSYA Syllabus
+What is the 'Visual Segment' of an IFR approach?,AIP,AIP ENR 1.5
+When must you declare 'Minimum Fuel' to ATC?,AIP / Part 91 MOS,AIP / Part 91 MOS
+What is 'RVSM' and its altitude requirements?,AIP,AIP ENR 1.1
+Define 'Vat' speed.,Performance,AIP GEN 2.2
+What are 'Krueger Flaps'?,Aerodynamics,CASA CADA Syllabus
+What is the 'Standard Instrument Departure' (SID)?,AIP,AIP ENR 1.5
+Explain 'Anhedral' wing design.,Aerodynamics,CASA CADA Syllabus
+What is 'Aspect Ratio' and its impact on drag?,Aerodynamics,CASA CADA Syllabus
+Define 'Service Ceiling' vs 'Absolute Ceiling'.,Performance,CASA CPL Syllabus
+What is 'TAS' and how is it calculated?,Navigation,AIP
+What is the 'Ground Effect'?,Aerodynamics,CASA CADA Syllabus
+Define 'Chord Line'.,Aerodynamics,CASA CADA Syllabus
+What is 'Angle of Attack'?,Aerodynamics,CASA CADA Syllabus
+What is 'Induced Drag'?,Aerodynamics,CASA CADA Syllabus
+Explain 'Para-Drag' (Parasite Drag).,Aerodynamics,CASA CADA Syllabus
+What is the 'Coffin Corner'?,Aerodynamics,CASA ATPL Syllabus
+What is the maximum distance a single-engine aircraft can fly over water without carrying life jackets for all occupants?,Part 91,CASR 91
+Under what circumstances can a pilot operate an aircraft below the minimum height rules?,Part 91,CASR 91.267
+"What are the specific requirements for an aircraft to be considered ""ready for flight""?",Part 91,CASR 91
+What is the rule regarding the consumption of alcohol by a crew member before a flight?,Part 91,CASR 91.520
+How must a pilot verify the accuracy of a non-automated weather briefing?,AIP / Part 91,AIP / CASR 91
+"What is the minimum altitude for a VFR flight over a ""non-populous"" area?",Part 91,CASR 91.267
+When must a pilot notify Air Traffic Control (ATC) of a deviation from an assigned altitude?,AIP,AIP ENR 1.1
+What are the day VMC requirements for an aircraft operating in Class D airspace?,Part 91 MOS,Part 91 MOS Ch 2
+How long before a flight must a weather forecast be obtained?,AIP / Part 91,AIP / CASR 91
+"What is the requirement for a pilot to have ""recent experience"" for carrying passengers at night?",Part 61,CASR 61.395
+What is the minimum number of life rafts required for a flight 100 nm from land?,Part 91,CASR 91
+Under what conditions can a pilot operate in a Prohibited Area?,AIP,AIP ENR 1.1
+What must a pilot do if they enter a Restricted Area without a clearance?,AIP,AIP ENR 1.1
+When is an aircraft required to have a functioning landing light for a night flight?,Part 91,CASR 91
+What are the requirements for a VFR flight to carry a radio in Class G airspace?,Part 91,CASR 91.625
+What is the rule for overtaking another aircraft in flight?,Operational Rules,CAR / CASR Part 91
+"What are the requirements for a ""standard"" overhead join at a non-controlled aerodrome?",AIP,AIP ENR 1.1
+"When must a pilot report a ""position"" to ATC in controlled airspace?",AIP,AIP ENR 1.1
+"What is the requirement for a ""safety pilot"" during simulated instrument flight?",Part 91,CASR 91.315
+"What are the rules for operating an aircraft with a ""Minimum Equipment List"" (MEL)?",Part 91,CASR 91.035
+When must a pilot carry a current aeronautical chart for the area of flight?,AIP / Part 91,AIP / CASR 91
+"When is a ""Secondary Surveillance Radar"" (SSR) transponder mandatory?",Part 91 MOS,Part 91 MOS Ch 14
+"What is the rule for flying in ""formation"" with another aircraft?",Operational Rules,CAR / CASR Part 91
+"What is the rule regarding ""smoking"" in a private aircraft?",Part 91,CASR 91
+"What are the requirements for ""refuelling"" with passengers on board?",Part 91,CASR 91
+"When must a pilot broadcast their intentions on a ""Common Traffic Advisory Frequency"" (CTAF)?",AIP,AIP ENR 1.1
+"What is the rule for ""right-of-way"" between a glider and a powered aircraft?",Operational Rules,CAR / CASR Part 91
+"What are the requirements for ""aerobatic flight"" regarding altitude and location?",Part 91,CASR 91
+"When is a ""parachute"" required to be worn by occupants?",Part 91,CASR 91
+"What are the requirements for ""night VFR"" fuel reserves?",Part 91 MOS,Part 91 MOS Ch 19
+"When must a pilot check the ""Aeronautical Information Service"" (AIS) for NOTAMs?",AIP,AIP GEN 3.1
+"When is a ""survival kit"" mandatory for a flight over land?",Part 91,CASR 91
