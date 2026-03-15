@@ -310,6 +310,7 @@ def _collect_prefix_candidates(
 def _route_known_query(query: str) -> dict[str, Any] | None:
     """Provide deterministic routing for stable legal intents that underperform semantically."""
     normalized = " ".join(query.lower().split())
+    competency_terms = ("competency", "standard", "standards", "training", "mos", "schedule", "syllabus")
 
     if (
         any(
@@ -337,7 +338,20 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
         "fuel" in normalized
         and "vfr" in normalized
         and "day" in normalized
-        and any(term in normalized for term in ("requirement", "requirements", "reserve", "minimum"))
+        and any(
+            term in normalized
+            for term in (
+                "requirement",
+                "requirements",
+                "reserve",
+                "minimum",
+                "carry",
+                "must i carry",
+                "must carry",
+                "how much fuel",
+                "need to carry",
+            )
+        )
     ):
         return {
             "regulation_hint": "MOS",
@@ -359,6 +373,19 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
                 "in sight of ground or water CASR 91.280"
             ),
             "preferred_citations": ["MOS 2.07", "CASR 91.280"],
+        }
+
+    if (
+        "medical" in normalized
+        and any(term in normalized for term in ("ppl", "private pilot", "class 2 medical", "class 2"))
+    ):
+        return {
+            "regulation_hint": "CASR",
+            "search_text": (
+                "CASR 67.160 class 2 medical certificate requirements private pilot "
+                "licence PPL CASR 67.165"
+            ),
+            "preferred_citations": ["CASR 67.160", "CASR 67.165"],
         }
 
     if (
@@ -401,6 +428,19 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
             "preferred_citations": ["AIP GEN 3.4 7.14.2", "AIP ENR 1.14 4.2.1"],
         }
 
+    if (
+        "night vfr" in normalized
+        and any(term in normalized for term in ("rules", "operations", "requirements", "conduct"))
+    ):
+        return {
+            "regulation_hint": "CASR",
+            "search_text": (
+                "CASR 61.980 night VFR rating privileges requirements conditions "
+                "CASR 91.195 VFR flight at night"
+            ),
+            "preferred_citations": ["CASR 61.980", "CASR 91.195"],
+        }
+
     # Flight review / biennial flight review / proficiency check → CASR 61.745
     if any(term in normalized for term in ("flight review", "biennial flight review", "proficiency check")):
         return {
@@ -431,6 +471,19 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
                 "IFR recency single pilot CASR 61.875"
             ),
             "preferred_citations": ["CASR 61.870", "CASR 61.875"],
+        }
+
+    if (
+        any(term in normalized for term in ("pilot in command time", "pic time", "log pic", "pilot in command hours"))
+        or ("log pilot in command" in normalized)
+    ):
+        return {
+            "regulation_hint": "CASR",
+            "search_text": (
+                "CASR 61.035 pilot in command flight time logging requirements "
+                "sole manipulator controls CASR 61.040"
+            ),
+            "preferred_citations": ["CASR 61.035", "CASR 61.040"],
         }
 
     # Passenger safety briefing — GA rule is CASR 91.565, not CASR 121/133/135 (air transport)
@@ -469,6 +522,20 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
             "preferred_citations": ["CASR 91.925", "CASR 91.930"],
         }
 
+    if (
+        "equipment" in normalized
+        and any(term in normalized for term in ("ifr", "instrument flight rules", "instrument flight"))
+        and not any(term in normalized for term in competency_terms)
+    ):
+        return {
+            "regulation_hint": "CASR",
+            "search_text": (
+                "CASR 91.505 aircraft equipment requirements IFR instrument "
+                "meteorological conditions CASR 91.510"
+            ),
+            "preferred_citations": ["CASR 91.505", "CASR 91.510"],
+        }
+
     # VFR weather minima (general) → AIP ENR 1.1
     # Guard: don't match queries already routed by the class-G VMC rule above
     if any(
@@ -491,6 +558,19 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
             "preferred_citations": ["AIP ENR 1.1 2.8.2.2", "AIP ENR 1.1 4.2.1"],
         }
 
+    if (
+        any(term in normalized for term in ("instrument approach", "ifr approach"))
+        and any(term in normalized for term in competency_terms)
+    ):
+        return {
+            "regulation_hint": "MOS",
+            "search_text": (
+                "MOS Schedule 2 instrument approach competency standards instrument "
+                "rating CPL approach procedures"
+            ),
+            "preferred_citations": ["MOS Schedule 2"],
+        }
+
     # Instrument approach procedures / approach minima → AIP ENR 1.5
     if any(
         term in normalized
@@ -501,7 +581,7 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
             "approach minima",
             "approach chart",
         )
-    ):
+    ) and not any(term in normalized for term in competency_terms):
         return {
             "regulation_hint": "AIP",
             "search_text": (
@@ -509,6 +589,32 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
                 "alternate aerodrome approach chart"
             ),
             "preferred_citations": ["AIP ENR 1.5 6.1.1", "AIP ENR 1.5 1.6"],
+        }
+
+    if (
+        any(term in normalized for term in ("cruising level", "cruising levels", "flight level", "semicircular rule"))
+        and any(term in normalized for term in ("ifr", "northbound", "southbound", "track", "cruising"))
+    ):
+        return {
+            "regulation_hint": "CASR",
+            "search_text": (
+                "CASR 91.290 specified IFR cruising levels northbound southbound "
+                "track CASR 91.295 AIP ENR 1.1 4.6"
+            ),
+            "preferred_citations": ["CASR 91.290", "CASR 91.295"],
+        }
+
+    if (
+        "gnss" in normalized
+        and any(term in normalized for term in ("ifr", "instrument flight", "requirements", "approval"))
+    ):
+        return {
+            "regulation_hint": "AIP",
+            "search_text": (
+                "AIP ENR 1.1 4.8 GNSS requirements IFR RNP RNAV approval navigation "
+                "specification AIP ENR 1.1 4.9"
+            ),
+            "preferred_citations": ["AIP ENR 1.1 4.8", "AIP ENR 1.1 4.9"],
         }
 
     return None

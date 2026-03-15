@@ -4,7 +4,7 @@ import unittest
 from dataclasses import dataclass
 from typing import Any
 
-from app.services.search_service import SearchService
+from app.services.search_service import SearchService, _route_known_query
 
 
 
@@ -788,6 +788,62 @@ class SearchServiceRegressionTests(unittest.TestCase):
 
         self.assertEqual(response.references[0].citation, "CASR 61.005")
         self.assertTrue(all(ref.citation.startswith("CASR 61.") for ref in response.references))
+
+    def test_known_route_matches_broader_day_vfr_fuel_phrasing(self) -> None:
+        route = _route_known_query("How much fuel must I carry for a VFR day flight?")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "MOS")
+        self.assertIn("MOS 19.02", route["preferred_citations"])
+
+    def test_known_route_routes_instrument_approach_competency_to_mos(self) -> None:
+        route = _route_known_query("What are the CPL instrument approach competency standards?")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "MOS")
+        self.assertIn("MOS Schedule 2", route["preferred_citations"])
+
+    def test_known_route_routes_ppl_medical_to_casr_67(self) -> None:
+        route = _route_known_query("What are the medical requirements for a PPL?")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "CASR")
+        self.assertEqual(route["preferred_citations"], ["CASR 67.160", "CASR 67.165"])
+
+    def test_known_route_routes_night_vfr_rules_to_casr(self) -> None:
+        route = _route_known_query("What are the rules for night VFR operations?")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "CASR")
+        self.assertEqual(route["preferred_citations"], ["CASR 61.980", "CASR 91.195"])
+
+    def test_known_route_routes_ifr_equipment_to_casr_91(self) -> None:
+        route = _route_known_query("What equipment is required for IFR flight?")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "CASR")
+        self.assertEqual(route["preferred_citations"], ["CASR 91.505", "CASR 91.510"])
+
+    def test_known_route_routes_pic_time_logging_to_casr_61(self) -> None:
+        route = _route_known_query("What are the requirements to log pilot in command time?")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "CASR")
+        self.assertEqual(route["preferred_citations"], ["CASR 61.035", "CASR 61.040"])
+
+    def test_known_route_routes_ifr_cruising_levels(self) -> None:
+        route = _route_known_query("What is the IFR cruising level for a northbound track?")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "CASR")
+        self.assertEqual(route["preferred_citations"], ["CASR 91.290", "CASR 91.295"])
+
+    def test_known_route_routes_gnss_ifr_to_aip(self) -> None:
+        route = _route_known_query("What are the GNSS requirements for IFR flight?")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "AIP")
+        self.assertEqual(route["preferred_citations"], ["AIP ENR 1.1 4.8", "AIP ENR 1.1 4.9"])
 
 
 if __name__ == "__main__":
