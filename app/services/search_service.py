@@ -421,6 +421,19 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
         }
 
     if (
+        "speed" in normalized
+        and any(term in normalized for term in ("10,000", "10000", "below 10", "below ten"))
+    ):
+        return {
+            "regulation_hint": "AIP",
+            "search_text": (
+                "AIP ENR 1.5 1.18.1 speed restrictions 250KT below 10000FT "
+                "AIP ENR 1.5 1.18"
+            ),
+            "preferred_citations": ["AIP ENR 1.5 1.18.1", "AIP ENR 1.5 1.18"],
+        }
+
+    if (
         "fuel" in normalized
         and "vfr" in normalized
         and "day" in normalized

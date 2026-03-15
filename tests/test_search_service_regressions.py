@@ -796,6 +796,13 @@ class SearchServiceRegressionTests(unittest.TestCase):
         self.assertEqual(route["regulation_hint"], "MOS")
         self.assertIn("MOS 19.02", route["preferred_citations"])
 
+    def test_known_route_matches_simple_speed_limit_query(self) -> None:
+        route = _route_known_query("Speed limit below 10,000 ft")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "AIP")
+        self.assertEqual(route["preferred_citations"], ["AIP ENR 1.5 1.18.1", "AIP ENR 1.5 1.18"])
+
     def test_known_route_routes_instrument_approach_competency_to_mos(self) -> None:
         route = _route_known_query("What are the CPL instrument approach competency standards?")
 
