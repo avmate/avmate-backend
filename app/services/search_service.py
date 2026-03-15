@@ -430,10 +430,10 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
         return {
             "regulation_hint": "AIP",
             "search_text": (
-                "AIP ENR 1.5 1.18.1 speed restrictions 250KT below 10000FT "
-                "AIP ENR 1.5 1.18"
+                "AIP ENR 1.4 4.1 speed limitation 250 knots below 10000 ft "
+                "class G airspace summary table"
             ),
-            "preferred_citations": ["AIP ENR 1.5 1.18.1", "AIP ENR 1.5 1.18"],
+            "preferred_citations": ["AIP ENR 1.4 4.1"],
         }
 
     if (

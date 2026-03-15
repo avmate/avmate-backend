@@ -801,7 +801,7 @@ class SearchServiceRegressionTests(unittest.TestCase):
 
         self.assertIsNotNone(route)
         self.assertEqual(route["regulation_hint"], "AIP")
-        self.assertEqual(route["preferred_citations"], ["AIP ENR 1.5 1.18.1", "AIP ENR 1.5 1.18"])
+        self.assertEqual(route["preferred_citations"], ["AIP ENR 1.4 4.1"])
 
     def test_known_route_routes_instrument_approach_competency_to_mos(self) -> None:
         route = _route_known_query("What are the CPL instrument approach competency standards?")
