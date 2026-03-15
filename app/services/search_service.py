@@ -361,6 +361,46 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
             "preferred_citations": ["MOS 2.07", "CASR 91.280"],
         }
 
+    if (
+        any(term in normalized for term in ("private pilot licence", "private pilot license", "ppl holder", "part 61 ppl", "ppl"))
+        and any(term in normalized for term in ("compensation", "hire"))
+    ):
+        return {
+            "regulation_hint": "CASR",
+            "search_text": (
+                "CASR 61.505 privileges of private pilot licences private operation "
+                "passengers compensation hire limitations"
+            ),
+            "preferred_citations": ["CASR 61.505"],
+        }
+
+    if (
+        any(term in normalized for term in ("foreign pilot licence", "foreign pilot license", "overseas flight crew licence"))
+        or (
+            "convert" in normalized
+            and "foreign" in normalized
+            and any(term in normalized for term in ("licence", "license"))
+        )
+    ):
+        return {
+            "regulation_hint": "CASR",
+            "search_text": (
+                "CASR 61.275 overseas flight crew authorisations recognition "
+                "CASR 61.280 bilateral agreements CASR 61.290 certificates of validation"
+            ),
+            "preferred_citations": ["CASR 61.275", "CASR 61.280", "CASR 61.290"],
+        }
+
+    if "mayday" in normalized and "pan-pan" in normalized:
+        return {
+            "regulation_hint": "AIP",
+            "search_text": (
+                "AIP GEN 3.4 7.14.2 mayday pan-pan distress urgency message procedures "
+                "AIP ENR 1.14 4.2.1 emergency declaration"
+            ),
+            "preferred_citations": ["AIP GEN 3.4 7.14.2", "AIP ENR 1.14 4.2.1"],
+        }
+
     # Flight review / biennial flight review / proficiency check → CASR 61.745
     if any(term in normalized for term in ("flight review", "biennial flight review", "proficiency check")):
         return {

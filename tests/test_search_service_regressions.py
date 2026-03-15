@@ -440,6 +440,114 @@ class SearchServiceRegressionTests(unittest.TestCase):
         self.assertEqual(response.references[0].citation, "CASR 61.745")
         self.assertEqual(vector_store.calls[0]["where"], {"regulation_type": {"$eq": "CASR"}})
 
+    def test_search_routes_ppl_compensation_query_to_casr_61_505(self) -> None:
+        ppl = _section(
+            "sec-ppl-privileges",
+            "CASR 61.505",
+            text="The holder of a private pilot licence is authorised to pilot an aircraft only in a private operation or while receiving flight training.",
+            regulation_type="CASR",
+        )
+        unrelated = _section(
+            "sec-baggage",
+            "CASR 121.255",
+            text="Carry-on baggage requirements for air transport operations.",
+            regulation_type="CASR",
+        )
+        vector_store = _FakeVectorStore(
+            [{"metadatas": [[{"section_id": "sec-baggage"}]], "distances": [[0.01]]}]
+        )
+        service = SearchService(
+            embeddings=_FakeEmbeddings(),
+            vector_store=vector_store,
+            canonical_store=_FakeCanonicalStore(
+                sections=[ppl, unrelated],
+                exact_prefix_map={"CASR 61.505": ["sec-ppl-privileges"]},
+            ),
+        )
+
+        response = service.search("Can a PPL holder carry passengers for compensation or hire?", top_k=3)
+
+        self.assertEqual(response.references[0].citation, "CASR 61.505")
+        self.assertEqual(vector_store.calls[0]["where"], {"regulation_type": {"$eq": "CASR"}})
+
+    def test_search_routes_foreign_licence_query_to_casr_61_275(self) -> None:
+        recognition = _section(
+            "sec-foreign-recognition",
+            "CASR 61.275",
+            text="CASA may recognise an overseas flight crew licence as equivalent for the grant of an Australian licence.",
+            regulation_type="CASR",
+        )
+        validation = _section(
+            "sec-validation",
+            "CASR 61.290",
+            text="The holder of an overseas flight crew licence may apply for a certificate of validation.",
+            regulation_type="CASR",
+        )
+        unrelated = _section(
+            "sec-aoc",
+            "AIP GEN 1.2.10",
+            text="Australian Foreign Air Transport Air Operator's Certificate information.",
+            regulation_type="AIP",
+        )
+        vector_store = _FakeVectorStore(
+            [{"metadatas": [[{"section_id": "sec-aoc"}]], "distances": [[0.01]]}]
+        )
+        service = SearchService(
+            embeddings=_FakeEmbeddings(),
+            vector_store=vector_store,
+            canonical_store=_FakeCanonicalStore(
+                sections=[recognition, validation, unrelated],
+                exact_prefix_map={
+                    "CASR 61.275": ["sec-foreign-recognition"],
+                    "CASR 61.290": ["sec-validation"],
+                },
+            ),
+        )
+
+        response = service.search("How do I convert a foreign pilot licence to an Australian CASA licence?", top_k=3)
+
+        self.assertEqual(response.references[0].citation, "CASR 61.275")
+        self.assertEqual(vector_store.calls[0]["where"], {"regulation_type": {"$eq": "CASR"}})
+
+    def test_search_routes_mayday_panpan_query_to_aip(self) -> None:
+        distress = _section(
+            "sec-mayday",
+            "AIP GEN 3.4 7.14.2",
+            text="If a CPDLC MAYDAY or PAN message is received, ATS must respond using the appropriate distress or urgency procedures.",
+            regulation_type="AIP",
+        )
+        emergency = _section(
+            "sec-emergency",
+            "AIP ENR 1.14 4.2.1",
+            text="A declaration of an emergency sets out the use of distress and urgency communications.",
+            regulation_type="AIP",
+        )
+        unrelated = _section(
+            "sec-other",
+            "AIP GEN 3.6 5.4.1",
+            text="General radio procedures.",
+            regulation_type="AIP",
+        )
+        vector_store = _FakeVectorStore(
+            [{"metadatas": [[{"section_id": "sec-other"}]], "distances": [[0.01]]}]
+        )
+        service = SearchService(
+            embeddings=_FakeEmbeddings(),
+            vector_store=vector_store,
+            canonical_store=_FakeCanonicalStore(
+                sections=[distress, emergency, unrelated],
+                exact_prefix_map={
+                    "AIP GEN 3.4 7.14.2": ["sec-mayday"],
+                    "AIP ENR 1.14 4.2.1": ["sec-emergency"],
+                },
+            ),
+        )
+
+        response = service.search("When must a pilot use 'Mayday' vs 'Pan-Pan'?", top_k=3)
+
+        self.assertEqual(response.references[0].citation, "AIP GEN 3.4 7.14.2")
+        self.assertEqual(vector_store.calls[0]["where"], {"regulation_type": {"$eq": "AIP"}})
+
     def test_search_routes_instrument_currency_query_to_casr_61_870(self) -> None:
         recency = _section(
             "sec-ifr-recency",
