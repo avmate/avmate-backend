@@ -70,6 +70,7 @@ AVIATION_QUERY_TERMS = {
     "pan-pan",
     "parachute",
     "passenger",
+    "pbn",
     "ped",
     "pic",
     "pilot",
@@ -95,6 +96,8 @@ AVIATION_QUERY_TERMS = {
     "altitude",
     "cloud",
     "clearance",
+    "journey log",
+    "maintenance release",
     "visibility",
     "cruising",
     "vfr",
@@ -501,6 +504,27 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
             "preferred_citations": ["MOS 26.08", "MOS 26.12"],
         }
 
+    if "journey log" in normalized:
+        return {
+            "regulation_hint": "CASR",
+            "search_text": (
+                "CASR 91.120 journey logs flights outside Australian territory "
+                "MOS 5.02 journey log information before international flight "
+                "MOS 5.03 journey log information after international flight"
+            ),
+            "preferred_citations": ["CASR 91.120", "MOS 5.02", "MOS 5.03"],
+        }
+
+    if "maintenance release" in normalized:
+        return {
+            "regulation_hint": "CAR",
+            "search_text": (
+                "CAR 43 maintenance releases in respect of Australian aircraft "
+                "CAR 47 maintenance release cease to be in force validity"
+            ),
+            "preferred_citations": ["CAR 43", "CAR 47"],
+        }
+
     if (
         any(term in normalized for term in ("private pilot licence", "private pilot license", "ppl holder", "part 61 ppl", "ppl"))
         and any(term in normalized for term in ("compensation", "hire"))
@@ -541,6 +565,16 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
             "preferred_citations": ["AIP GEN 3.4 7.14.2", "AIP ENR 1.14 4.2.1"],
         }
 
+    if "knowledge deficiency" in normalized or re.search(r"\bkdrs?\b", normalized):
+        return {
+            "regulation_hint": "CASR",
+            "search_text": (
+                "CASR 61.230 aeronautical knowledge examinations knowledge "
+                "deficiency reports KDR"
+            ),
+            "preferred_citations": ["CASR 61.230"],
+        }
+
     if (
         "night vfr" in normalized
         and any(term in normalized for term in ("rules", "operations", "requirements", "conduct"))
@@ -552,6 +586,29 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
                 "CASR 61.965 recent experience night VFR CASR 61.980 night VFR endorsement"
             ),
             "preferred_citations": ["CASR 61.970", "CASR 61.965", "CASR 61.980"],
+        }
+
+    if (
+        ("performance based navigation" in normalized or re.search(r"\bpbn\b", normalized))
+        and any(term in normalized for term in ("recency", "recent experience", "currency"))
+    ):
+        return {
+            "regulation_hint": "CASR",
+            "search_text": (
+                "CASR 61.870 limitations exercise privileges instrument rating recent "
+                "experience PBN CASR 61.875"
+            ),
+            "preferred_citations": ["CASR 61.870", "CASR 61.875"],
+        }
+
+    if "performance based navigation" in normalized or re.search(r"\bpbn\b", normalized):
+        return {
+            "regulation_hint": "AIP",
+            "search_text": (
+                "AIP GEN 1.5 8.1 performance based navigation PBN requirements advice "
+                "and information area navigation"
+            ),
+            "preferred_citations": ["AIP GEN 1.5 8.1"],
         }
 
     # Flight review / biennial flight review / proficiency check → CASR 61.745
@@ -659,6 +716,73 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
                 "VMC flight under VFR day night"
             ),
             "preferred_citations": ["AIP ENR 1.1 2.8.2.2", "AIP ENR 1.1 4.2.1"],
+        }
+
+    if any(term in normalized for term in ("circle-to-land", "circle to land", "circling approach", "visual circling")):
+        return {
+            "regulation_hint": "AIP",
+            "search_text": (
+                "AIP ENR 1.5 1.6 circling approaches visual circling limitations "
+                "AIP ENR 1.5 1.6.1 AIP ENR 1.5 1.6.2 AIP ENR 1.5 1.6.3"
+            ),
+            "preferred_citations": [
+                "AIP ENR 1.5 1.6",
+                "AIP ENR 1.5 1.6.1",
+                "AIP ENR 1.5 1.6.2",
+                "AIP ENR 1.5 1.6.3",
+            ],
+        }
+
+    if (
+        any(term in normalized for term in ("descend below the mda", "descend below mda", "below the mda/da", "below mda/da"))
+        or (
+            "descend below" in normalized
+            and any(term in normalized for term in ("decision altitude", "minimum descent altitude", "mda", "da"))
+        )
+    ):
+        return {
+            "regulation_hint": "AIP",
+            "search_text": (
+                "AIP ENR 1.5 1.7.2 descent below straight-in MDA "
+                "AIP ENR 1.5 1.8.4 descent below MDA"
+            ),
+            "preferred_citations": ["AIP ENR 1.5 1.7.2", "AIP ENR 1.5 1.8.4"],
+        }
+
+    if (
+        any(term in normalized for term in ("da vs mda", "mda vs da", "mda/da"))
+        or ("decision altitude" in normalized and "minimum descent altitude" in normalized)
+    ):
+        return {
+            "regulation_hint": "AIP",
+            "search_text": (
+                "AIP GEN 2.2 1 decision altitude height DA H minimum descent altitude "
+                "height MDA H definitions"
+            ),
+            "preferred_citations": ["AIP GEN 2.2 1"],
+        }
+
+    if (
+        "aerodrome elevation" in normalized
+        and any(term in normalized for term in ("define", "definition", "what is"))
+    ):
+        return {
+            "regulation_hint": "AIP",
+            "search_text": "AIP GEN 2.2 1 Aerodrome Elevation definition",
+            "preferred_citations": ["AIP GEN 2.2 1"],
+        }
+
+    if (
+        "standard terminal arrival" in normalized
+        or ("star" in normalized and any(term in normalized for term in ("define", "what is", "meaning")))
+    ):
+        return {
+            "regulation_hint": "AIP",
+            "search_text": (
+                "AIP GEN 2.2 1 Standard Instrument Arrival STAR "
+                "AIP ENR 1.1 2.2.5"
+            ),
+            "preferred_citations": ["AIP GEN 2.2 1", "AIP ENR 1.1 2.2.5"],
         }
 
     if (

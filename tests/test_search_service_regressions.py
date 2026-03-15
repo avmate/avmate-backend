@@ -855,6 +855,65 @@ class SearchServiceRegressionTests(unittest.TestCase):
         self.assertEqual(route["regulation_hint"], "AIP")
         self.assertEqual(route["preferred_citations"], ["AIP ENR 1.1 4.8", "AIP ENR 1.1 4.9"])
 
+    def test_known_route_routes_journey_log_query(self) -> None:
+        route = _route_known_query("What documents must an operator keep in a journey log?")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "CASR")
+        self.assertEqual(route["preferred_citations"], ["CASR 91.120", "MOS 5.02", "MOS 5.03"])
+
+    def test_known_route_routes_maintenance_release_query(self) -> None:
+        route = _route_known_query("What is a Maintenance Release and how long is it valid for?")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "CAR")
+        self.assertEqual(route["preferred_citations"], ["CAR 43", "CAR 47"])
+
+    def test_known_route_routes_kdr_query(self) -> None:
+        route = _route_known_query("What are the Knowledge Deficiency Reports (KDRs)?")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "CASR")
+        self.assertEqual(route["preferred_citations"], ["CASR 61.230"])
+
+    def test_known_route_routes_pbn_recency_query(self) -> None:
+        route = _route_known_query("What are the requirements for Performance Based Navigation recency?")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "CASR")
+        self.assertEqual(route["preferred_citations"], ["CASR 61.870", "CASR 61.875"])
+
+    def test_known_route_routes_circle_to_land_query(self) -> None:
+        route = _route_known_query("Explain the Circle-to-Land procedure and its limitations.")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "AIP")
+        self.assertEqual(
+            route["preferred_citations"],
+            ["AIP ENR 1.5 1.6", "AIP ENR 1.5 1.6.1", "AIP ENR 1.5 1.6.2", "AIP ENR 1.5 1.6.3"],
+        )
+
+    def test_known_route_routes_mda_da_descent_query(self) -> None:
+        route = _route_known_query("When can you descend below the MDA/DA in Australia?")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "AIP")
+        self.assertEqual(route["preferred_citations"], ["AIP ENR 1.5 1.7.2", "AIP ENR 1.5 1.8.4"])
+
+    def test_known_route_routes_star_definition_query(self) -> None:
+        route = _route_known_query("Define Standard Terminal Arrival (STAR).")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "AIP")
+        self.assertEqual(route["preferred_citations"], ["AIP GEN 2.2 1", "AIP ENR 1.1 2.2.5"])
+
+    def test_known_route_routes_aerodrome_elevation_definition_query(self) -> None:
+        route = _route_known_query("What is the definition of Aerodrome Elevation in the AIP?")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "AIP")
+        self.assertEqual(route["preferred_citations"], ["AIP GEN 2.2 1"])
+
     def test_known_route_prefers_schedule_section_for_instrument_approach_competency(self) -> None:
         route = _route_known_query("What are the CPL instrument approach competency standards?")
 
@@ -896,6 +955,9 @@ class SearchServiceRegressionTests(unittest.TestCase):
 
     def test_looks_aviation_query_accepts_part_and_licence_terms(self) -> None:
         self.assertTrue(_looks_aviation_query("What are your privileges and limitations under a Part 61 PPL?"))
+
+    def test_looks_aviation_query_accepts_journey_log_term(self) -> None:
+        self.assertTrue(_looks_aviation_query("What documents must an operator keep in a journey log?"))
 
 
 if __name__ == "__main__":
