@@ -950,7 +950,7 @@ def _candidate_query_overlap(section: dict, query_text: str) -> tuple[int, int, 
     )
     overlap = sum(1 for token in query_tokens if token in haystack)
     title_hits = sum(1 for token in query_tokens if token in title)
-    return (overlap, title_hits, -len(title))
+    return (title_hits, overlap, -len(title))
 
 
 def _dedupe_candidates_by_citation(candidates: list[tuple[float, dict]]) -> list[tuple[float, dict]]:
