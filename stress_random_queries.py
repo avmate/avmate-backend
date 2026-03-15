@@ -69,14 +69,19 @@ REFERENCE_CITATION_HINT_PATTERN = re.compile(
 PART_HINT_PATTERN = re.compile(r"\bpart\s+(\d+)\b", re.IGNORECASE)
 OUT_OF_SCOPE_HINT_PATTERNS = (
     re.compile(r"\b(?:hr|behavioral|operational|general practice)\b", re.IGNORECASE),
-    re.compile(r"\b(?:casa workbook|syllabus|guide|advisory circular)\b", re.IGNORECASE),
+    re.compile(r"\b(?:casa workbook|casa handbook|syllabus|guide|advisory circular)\b", re.IGNORECASE),
     re.compile(r"\b(?:aerodynamics)\b", re.IGNORECASE),
     re.compile(r"\b(?:bo?m|meteorology|human factors)\b", re.IGNORECASE),
     re.compile(r"\b(?:airservices|naips|atsb|transport safety investigation act)\b", re.IGNORECASE),
+    re.compile(r"\b(?:aviation transport security act|part 101|crm|administrative|admin)\b", re.IGNORECASE),
 )
 OUT_OF_SCOPE_QUERY_PATTERNS = (
     re.compile(r"\bp-?factor\b", re.IGNORECASE),
     re.compile(r"\b(?:scuba|decompression|decompression diving|scuba diving)\b", re.IGNORECASE),
+    re.compile(r"\b(?:3:1 descent profile|vat|vref)\b", re.IGNORECASE),
+    re.compile(r"\b(?:form\s*61-9tx|security identification card|asic)\b", re.IGNORECASE),
+    re.compile(r"\b(?:what is tas and how is it calculated|moca\b.*\bmea|mea\b.*\bmoca)\b", re.IGNORECASE),
+    re.compile(r"\b(?:how do you manage a captain who is disregarding a sop|verify an applicant'?s identity)\b", re.IGNORECASE),
 )
 
 

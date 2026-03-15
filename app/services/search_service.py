@@ -556,6 +556,17 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
             "preferred_citations": ["CAR 43", "CAR 47"],
         }
 
+    if "airworthiness directive" in normalized or re.search(r"\bad\b", normalized):
+        if any(term in normalized for term in ("purpose", "what is", "meaning", "requirements", "directive")):
+            return {
+                "regulation_hint": "CASR",
+                "search_text": (
+                    "CASR 202.170 airworthiness directives meaning purpose compliance "
+                    "CASR 202.171 exemption variation CASR 202.172 exemption from requirement"
+                ),
+                "preferred_citations": ["CASR 202.170", "CASR 202.171", "CASR 202.172"],
+            }
+
     if (
         any(term in normalized for term in ("private pilot licence", "private pilot license", "ppl holder", "part 61 ppl", "ppl"))
         and any(term in normalized for term in ("compensation", "hire"))
@@ -567,6 +578,20 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
                 "passengers compensation hire limitations"
             ),
             "preferred_citations": ["CASR 61.505"],
+        }
+
+    if (
+        any(term in normalized for term in ("head of operations", "hoo"))
+        and any(term in normalized for term in ("flying school", "part 141", "part 142", "training provider"))
+    ):
+        return {
+            "regulation_hint": "CASR",
+            "search_text": (
+                "CASR 141.020 definition of key personnel head of operations part 141 "
+                "CASR 141.030 chief flying instructor head of operations duties "
+                "CASR 141.045 operator responsibilities key personnel"
+            ),
+            "preferred_citations": ["CASR 141.020", "CASR 141.030", "CASR 141.045"],
         }
 
     if (
@@ -793,6 +818,16 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
             "preferred_citations": ["AIP GEN 2.2 1"],
         }
 
+    if "rnp" in normalized and "rnav" in normalized:
+        return {
+            "regulation_hint": "AIP",
+            "search_text": (
+                "AIP GEN 2.2 1 Required Navigation Performance RNP definition "
+                "RNAV Specification definition area navigation"
+            ),
+            "preferred_citations": ["AIP GEN 2.2 1"],
+        }
+
     if (
         "aerodrome elevation" in normalized
         and any(term in normalized for term in ("define", "definition", "what is"))
@@ -814,6 +849,23 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
                 "AIP ENR 1.1 2.2.5"
             ),
             "preferred_citations": ["AIP GEN 2.2 1", "AIP ENR 1.1 2.2.5"],
+        }
+
+    if "visual docking guidance" in normalized or "vdgs" in normalized:
+        return {
+            "regulation_hint": "AIP",
+            "search_text": (
+                "AIP AD 1.1 5.1 Visual Docking Guidance Systems VDGS used in Australia "
+                "AIP AD 1.1 5.2 apron chart bays stands"
+            ),
+            "preferred_citations": ["AIP AD 1.1 5.1", "AIP AD 1.1 5.2"],
+        }
+
+    if "clearway" in normalized or "cwy" in normalized:
+        return {
+            "regulation_hint": "AIP",
+            "search_text": "AIP GEN 2.2 1 Clearway CWY definition declared distances performance",
+            "preferred_citations": ["AIP GEN 2.2 1"],
         }
 
     if (

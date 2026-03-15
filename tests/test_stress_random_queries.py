@@ -36,6 +36,33 @@ class StressRandomQueriesTests(unittest.TestCase):
             )
         )
 
+    def test_marks_drone_part_101_query_as_out_of_scope(self) -> None:
+        self.assertTrue(
+            _is_out_of_scope_case(
+                "CASR Part 101",
+                "Drone / Part 101",
+                "Can I fly a drone within 5.5km of a controlled airport (with a tower)?",
+            )
+        )
+
+    def test_marks_security_id_card_query_as_out_of_scope(self) -> None:
+        self.assertTrue(
+            _is_out_of_scope_case(
+                "Aviation Transport Security Act",
+                "Security",
+                "When is a Security Identification Card (ASIC) required?",
+            )
+        )
+
+    def test_marks_theory_only_navigation_query_as_out_of_scope(self) -> None:
+        self.assertTrue(
+            _is_out_of_scope_case(
+                "Navigation",
+                "CPL & IFR",
+                "Explain the 3:1 descent profile rule.",
+            )
+        )
+
     def test_accepts_structured_aip_citations(self) -> None:
         self.assertTrue(is_precise_citation("AIP ENR 1.5 6.2.1", "AIP"))
         self.assertTrue(is_precise_citation("AIP GEN 1.2.2", "AIP"))

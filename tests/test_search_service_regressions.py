@@ -986,6 +986,20 @@ class SearchServiceRegressionTests(unittest.TestCase):
         self.assertEqual(route["regulation_hint"], "CAR")
         self.assertEqual(route["preferred_citations"], ["CAR 43", "CAR 47"])
 
+    def test_known_route_routes_airworthiness_directive_query(self) -> None:
+        route = _route_known_query("What is the purpose of an Airworthiness Directive (AD)?")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "CASR")
+        self.assertEqual(route["preferred_citations"], ["CASR 202.170", "CASR 202.171", "CASR 202.172"])
+
+    def test_known_route_routes_head_of_operations_query(self) -> None:
+        route = _route_known_query("What is the role of the Head of Operations in a flying school?")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "CASR")
+        self.assertEqual(route["preferred_citations"], ["CASR 141.020", "CASR 141.030", "CASR 141.045"])
+
     def test_known_route_routes_kdr_query(self) -> None:
         route = _route_known_query("What are the Knowledge Deficiency Reports (KDRs)?")
 
@@ -1024,12 +1038,33 @@ class SearchServiceRegressionTests(unittest.TestCase):
         self.assertEqual(route["regulation_hint"], "AIP")
         self.assertEqual(route["preferred_citations"], ["AIP GEN 2.2 1"])
 
+    def test_known_route_routes_rnp_vs_rnav_query(self) -> None:
+        route = _route_known_query("Define RNP vs RNAV.")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "AIP")
+        self.assertEqual(route["preferred_citations"], ["AIP GEN 2.2 1"])
+
     def test_known_route_routes_star_definition_query(self) -> None:
         route = _route_known_query("Define Standard Terminal Arrival (STAR).")
 
         self.assertIsNotNone(route)
         self.assertEqual(route["regulation_hint"], "AIP")
         self.assertEqual(route["preferred_citations"], ["AIP GEN 2.2 1", "AIP ENR 1.1 2.2.5"])
+
+    def test_known_route_routes_vdgs_query(self) -> None:
+        route = _route_known_query("What are the Visual Docking Guidance Systems (VDGS)?")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "AIP")
+        self.assertEqual(route["preferred_citations"], ["AIP AD 1.1 5.1", "AIP AD 1.1 5.2"])
+
+    def test_known_route_routes_clearway_query(self) -> None:
+        route = _route_known_query("Define Clearway (CWY) and its use in performance.")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "AIP")
+        self.assertEqual(route["preferred_citations"], ["AIP GEN 2.2 1"])
 
     def test_known_route_routes_aerodrome_elevation_definition_query(self) -> None:
         route = _route_known_query("What is the definition of Aerodrome Elevation in the AIP?")
