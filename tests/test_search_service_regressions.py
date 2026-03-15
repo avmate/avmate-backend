@@ -796,6 +796,13 @@ class SearchServiceRegressionTests(unittest.TestCase):
         self.assertEqual(route["regulation_hint"], "MOS")
         self.assertIn("MOS 19.02", route["preferred_citations"])
 
+    def test_known_route_matches_part91_small_aeroplane_fuel_query(self) -> None:
+        route = _route_known_query("Under CASR Part 91, what are the fuel requirements for a small aeroplane (fixed-wing)?")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "MOS")
+        self.assertEqual(route["preferred_citations"], ["MOS 19.02"])
+
     def test_known_route_matches_simple_speed_limit_query(self) -> None:
         route = _route_known_query("Speed limit below 10,000 ft")
 
@@ -816,6 +823,13 @@ class SearchServiceRegressionTests(unittest.TestCase):
         self.assertIsNotNone(route)
         self.assertEqual(route["regulation_hint"], "CASR")
         self.assertEqual(route["preferred_citations"], ["CASR 67.160", "CASR 67.165"])
+
+    def test_known_route_routes_air_transport_vs_aerial_work_query(self) -> None:
+        route = _route_known_query("How do you determine if a flight is Air Transport vs Aerial Work?")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "CASR")
+        self.assertEqual(route["preferred_citations"], ["CASR 119.010", "CASR 138.010"])
 
     def test_known_route_routes_ifr_equipment_to_mos_26(self) -> None:
         route = _route_known_query("What equipment is required for IFR flight?")
@@ -899,6 +913,13 @@ class SearchServiceRegressionTests(unittest.TestCase):
         self.assertIsNotNone(route)
         self.assertEqual(route["regulation_hint"], "AIP")
         self.assertEqual(route["preferred_citations"], ["AIP ENR 1.5 1.7.2", "AIP ENR 1.5 1.8.4"])
+
+    def test_known_route_routes_quoted_da_vs_mda_query(self) -> None:
+        route = _route_known_query("Define 'DA' vs 'MDA'.")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "AIP")
+        self.assertEqual(route["preferred_citations"], ["AIP GEN 2.2 1"])
 
     def test_known_route_routes_star_definition_query(self) -> None:
         route = _route_known_query("Define Standard Terminal Arrival (STAR).")

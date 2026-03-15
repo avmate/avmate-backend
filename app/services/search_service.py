@@ -398,7 +398,7 @@ def _collect_prefix_candidates(
 
 def _route_known_query(query: str) -> dict[str, Any] | None:
     """Provide deterministic routing for stable legal intents that underperform semantically."""
-    normalized = " ".join(query.lower().split())
+    normalized = " ".join(re.sub(r"[\"'`]", "", query.lower()).split())
     competency_terms = ("competency", "standard", "standards", "training", "mos", "schedule", "syllabus")
 
     if (
@@ -465,6 +465,19 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
         }
 
     if (
+        "fuel" in normalized
+        and any(term in normalized for term in ("part 91", "small aeroplane", "small airplane", "fixed-wing", "fixed wing"))
+    ):
+        return {
+            "regulation_hint": "MOS",
+            "search_text": (
+                "MOS 19.02 fuel requirements for VFR flight by day small aeroplane "
+                "fixed wing Part 91 final reserve fuel"
+            ),
+            "preferred_citations": ["MOS 19.02"],
+        }
+
+    if (
         "class g" in normalized
         and any(term in normalized for term in ("visibility", "cloud clearance", "clear of cloud", "vmc"))
     ):
@@ -488,6 +501,16 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
                 "licence PPL CASR 67.165"
             ),
             "preferred_citations": ["CASR 67.160", "CASR 67.165"],
+        }
+
+    if "air transport" in normalized and "aerial work" in normalized:
+        return {
+            "regulation_hint": "CASR",
+            "search_text": (
+                "CASR 119.010 definition of Australian air transport operation "
+                "CASR 138.010 definition of aerial work operation"
+            ),
+            "preferred_citations": ["CASR 119.010", "CASR 138.010"],
         }
 
     if (
