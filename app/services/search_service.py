@@ -435,10 +435,10 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
         return {
             "regulation_hint": "CASR",
             "search_text": (
-                "CASR 61.980 night VFR rating privileges requirements conditions "
-                "CASR 91.195 VFR flight at night"
+                "CASR 61.970 limitations on exercise of privileges of night VFR ratings "
+                "CASR 61.965 recent experience night VFR CASR 61.980 night VFR endorsement"
             ),
-            "preferred_citations": ["CASR 61.980", "CASR 91.195"],
+            "preferred_citations": ["CASR 61.970", "CASR 61.965", "CASR 61.980"],
         }
 
     # Flight review / biennial flight review / proficiency check → CASR 61.745
@@ -471,19 +471,6 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
                 "IFR recency single pilot CASR 61.875"
             ),
             "preferred_citations": ["CASR 61.870", "CASR 61.875"],
-        }
-
-    if (
-        any(term in normalized for term in ("pilot in command time", "pic time", "log pic", "pilot in command hours"))
-        or ("log pilot in command" in normalized)
-    ):
-        return {
-            "regulation_hint": "CASR",
-            "search_text": (
-                "CASR 61.035 pilot in command flight time logging requirements "
-                "sole manipulator controls CASR 61.040"
-            ),
-            "preferred_citations": ["CASR 61.035", "CASR 61.040"],
         }
 
     # Passenger safety briefing — GA rule is CASR 91.565, not CASR 121/133/135 (air transport)
@@ -522,20 +509,6 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
             "preferred_citations": ["CASR 91.925", "CASR 91.930"],
         }
 
-    if (
-        "equipment" in normalized
-        and any(term in normalized for term in ("ifr", "instrument flight rules", "instrument flight"))
-        and not any(term in normalized for term in competency_terms)
-    ):
-        return {
-            "regulation_hint": "CASR",
-            "search_text": (
-                "CASR 91.505 aircraft equipment requirements IFR instrument "
-                "meteorological conditions CASR 91.510"
-            ),
-            "preferred_citations": ["CASR 91.505", "CASR 91.510"],
-        }
-
     # VFR weather minima (general) → AIP ENR 1.1
     # Guard: don't match queries already routed by the class-G VMC rule above
     if any(
@@ -565,10 +538,10 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
         return {
             "regulation_hint": "MOS",
             "search_text": (
-                "MOS Schedule 2 instrument approach competency standards instrument "
-                "rating CPL approach procedures"
+                "instrument approach competency standards instrument rating CPL "
+                "MOS schedule training"
             ),
-            "preferred_citations": ["MOS Schedule 2"],
+            "preferred_citations": [],
         }
 
     # Instrument approach procedures / approach minima → AIP ENR 1.5

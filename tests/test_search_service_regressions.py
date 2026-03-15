@@ -801,7 +801,7 @@ class SearchServiceRegressionTests(unittest.TestCase):
 
         self.assertIsNotNone(route)
         self.assertEqual(route["regulation_hint"], "MOS")
-        self.assertIn("MOS Schedule 2", route["preferred_citations"])
+        self.assertEqual(route["preferred_citations"], [])
 
     def test_known_route_routes_ppl_medical_to_casr_67(self) -> None:
         route = _route_known_query("What are the medical requirements for a PPL?")
@@ -815,21 +815,7 @@ class SearchServiceRegressionTests(unittest.TestCase):
 
         self.assertIsNotNone(route)
         self.assertEqual(route["regulation_hint"], "CASR")
-        self.assertEqual(route["preferred_citations"], ["CASR 61.980", "CASR 91.195"])
-
-    def test_known_route_routes_ifr_equipment_to_casr_91(self) -> None:
-        route = _route_known_query("What equipment is required for IFR flight?")
-
-        self.assertIsNotNone(route)
-        self.assertEqual(route["regulation_hint"], "CASR")
-        self.assertEqual(route["preferred_citations"], ["CASR 91.505", "CASR 91.510"])
-
-    def test_known_route_routes_pic_time_logging_to_casr_61(self) -> None:
-        route = _route_known_query("What are the requirements to log pilot in command time?")
-
-        self.assertIsNotNone(route)
-        self.assertEqual(route["regulation_hint"], "CASR")
-        self.assertEqual(route["preferred_citations"], ["CASR 61.035", "CASR 61.040"])
+        self.assertEqual(route["preferred_citations"], ["CASR 61.970", "CASR 61.965", "CASR 61.980"])
 
     def test_known_route_routes_ifr_cruising_levels(self) -> None:
         route = _route_known_query("What is the IFR cruising level for a northbound track?")
