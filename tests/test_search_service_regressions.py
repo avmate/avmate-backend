@@ -801,7 +801,7 @@ class SearchServiceRegressionTests(unittest.TestCase):
 
         self.assertIsNotNone(route)
         self.assertEqual(route["regulation_hint"], "MOS")
-        self.assertEqual(route["preferred_citations"], [])
+        self.assertEqual(route["preferred_citations"], ["MOS Schedule 4 Section M"])
 
     def test_known_route_routes_ppl_medical_to_casr_67(self) -> None:
         route = _route_known_query("What are the medical requirements for a PPL?")
@@ -810,12 +810,29 @@ class SearchServiceRegressionTests(unittest.TestCase):
         self.assertEqual(route["regulation_hint"], "CASR")
         self.assertEqual(route["preferred_citations"], ["CASR 67.160", "CASR 67.165"])
 
+    def test_known_route_routes_ifr_equipment_to_mos_26(self) -> None:
+        route = _route_known_query("What equipment is required for IFR flight?")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "MOS")
+        self.assertEqual(route["preferred_citations"], ["MOS 26.08", "MOS 26.12"])
+
     def test_known_route_routes_night_vfr_rules_to_casr(self) -> None:
         route = _route_known_query("What are the rules for night VFR operations?")
 
         self.assertIsNotNone(route)
         self.assertEqual(route["regulation_hint"], "CASR")
         self.assertEqual(route["preferred_citations"], ["CASR 61.970", "CASR 61.965", "CASR 61.980"])
+
+    def test_known_route_routes_pic_logging_to_part_61(self) -> None:
+        route = _route_known_query("What are the requirements to log pilot in command time?")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "CASR")
+        self.assertEqual(
+            route["preferred_citations"],
+            ["CASR 61.090", "CASR 61.345", "CASR 61.355", "CASR 61.365"],
+        )
 
     def test_known_route_routes_ifr_cruising_levels(self) -> None:
         route = _route_known_query("What is the IFR cruising level for a northbound track?")
@@ -830,6 +847,29 @@ class SearchServiceRegressionTests(unittest.TestCase):
         self.assertIsNotNone(route)
         self.assertEqual(route["regulation_hint"], "AIP")
         self.assertEqual(route["preferred_citations"], ["AIP ENR 1.1 4.8", "AIP ENR 1.1 4.9"])
+
+    def test_known_route_prefers_schedule_section_for_instrument_approach_competency(self) -> None:
+        route = _route_known_query("What are the CPL instrument approach competency standards?")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "MOS")
+        self.assertEqual(route["preferred_citations"], ["MOS Schedule 4 Section M"])
+
+    def test_search_returns_empty_for_clearly_non_aviation_query(self) -> None:
+        service = SearchService(
+            embeddings=_FakeEmbeddings(),
+            vector_store=_FakeVectorStore(
+                [{"metadatas": [[{"section_id": "sec-noise"}]], "distances": [[0.01]]}]
+            ),
+            canonical_store=_FakeCanonicalStore(
+                sections=[_section("sec-noise", "CAR 42T", text="All changes must be approved.", regulation_type="CAR")]
+            ),
+        )
+
+        response = service.search("What is the capital of France?", top_k=3)
+
+        self.assertEqual(response.references, [])
+        self.assertEqual(response.confidence, 0)
 
 
 if __name__ == "__main__":

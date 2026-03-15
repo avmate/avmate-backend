@@ -28,6 +28,73 @@ if TYPE_CHECKING:
 
 REGULATION_FAMILIES = {"AIP", "CASR", "CAR", "CAO", "MOS", "CAA"}
 _FAMILY_RE = re.compile(r"^(AIP|CASR|CAR|CAO|MOS|CAA)\b", re.IGNORECASE)
+AVIATION_QUERY_TERMS = {
+    "aerodrome",
+    "aeroplane",
+    "aircraft",
+    "airspace",
+    "ais",
+    "aip",
+    "alternate",
+    "altimeter",
+    "approach",
+    "aviation",
+    "banner",
+    "casa",
+    "casr",
+    "cao",
+    "car",
+    "cavok",
+    "ctaf",
+    "emergency",
+    "enr",
+    "equipment",
+    "flight",
+    "fuel",
+    "gen",
+    "gnss",
+    "ifr",
+    "ils",
+    "instrument",
+    "landing",
+    "licence",
+    "license",
+    "logbook",
+    "lsalt",
+    "mayday",
+    "medical",
+    "mel",
+    "metar",
+    "mos",
+    "night vfr",
+    "notam",
+    "pan-pan",
+    "parachute",
+    "passenger",
+    "ped",
+    "pic",
+    "pilot",
+    "qnh",
+    "qfe",
+    "qne",
+    "raim",
+    "radio",
+    "rating",
+    "refuelling",
+    "runway",
+    "rvsm",
+    "sartime",
+    "seatbelt",
+    "ssr",
+    "taf",
+    "takeoff",
+    "take-off",
+    "taxi",
+    "transponder",
+    "vfr",
+    "vmc",
+    "weather",
+}
 
 
 class SearchService:
@@ -52,6 +119,8 @@ class SearchService:
         explicit_citations = [_normalize_structured_citation(c) for c in extract_citations(query)]
         explicit_families = {_detect_family(c) for c in explicit_citations} - {None}
         query_route = _route_explicit_citation_query(query, explicit_citations) if explicit_citations else _route_known_query(query)
+        if not explicit_citations and not query_route and not _looks_aviation_query(query):
+            return _empty_response(request_id)
 
         # 2. Exact citation lookup — deterministic, bypasses semantic for structured queries
         #    Only fires for specific section citations, not broad family/part references.
@@ -389,6 +458,20 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
         }
 
     if (
+        "equipment" in normalized
+        and any(term in normalized for term in ("ifr", "instrument flight rules", "instrument flight"))
+        and not any(term in normalized for term in competency_terms)
+    ):
+        return {
+            "regulation_hint": "MOS",
+            "search_text": (
+                "MOS 26.08 aeroplane IFR flight equipment requirements "
+                "MOS 26.12 rotorcraft IFR flight"
+            ),
+            "preferred_citations": ["MOS 26.08", "MOS 26.12"],
+        }
+
+    if (
         any(term in normalized for term in ("private pilot licence", "private pilot license", "ppl holder", "part 61 ppl", "ppl"))
         and any(term in normalized for term in ("compensation", "hire"))
     ):
@@ -473,6 +556,23 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
             "preferred_citations": ["CASR 61.870", "CASR 61.875"],
         }
 
+    if (
+        (
+            any(term in normalized for term in ("pilot in command time", "pic time", "pilot in command hours"))
+            and any(term in normalized for term in ("log", "logging", "record", "logbook"))
+        )
+        or "log pilot in command" in normalized
+    ):
+        return {
+            "regulation_hint": "CASR",
+            "search_text": (
+                "CASR 61.090 definition of flight time as pilot in command for Part 61 "
+                "CASR 61.345 personal logbooks pilots CASR 61.355 retention "
+                "CASR 61.365 production"
+            ),
+            "preferred_citations": ["CASR 61.090", "CASR 61.345", "CASR 61.355", "CASR 61.365"],
+        }
+
     # Passenger safety briefing — GA rule is CASR 91.565, not CASR 121/133/135 (air transport)
     if any(
         term in normalized
@@ -538,10 +638,10 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
         return {
             "regulation_hint": "MOS",
             "search_text": (
-                "instrument approach competency standards instrument rating CPL "
-                "MOS schedule training"
+                "MOS Schedule 4 Section M instrument rating instrument approach "
+                "competency standards CPL training"
             ),
-            "preferred_citations": [],
+            "preferred_citations": ["MOS Schedule 4 Section M"],
         }
 
     # Instrument approach procedures / approach minima → AIP ENR 1.5
@@ -713,6 +813,11 @@ def _citation_matches_family_part(citation: str, prefix: str) -> bool:
 def _extract_section_ids(raw: dict) -> list[str]:
     metas = (raw.get("metadatas") or [[]])[0]
     return [m["section_id"] for m in metas if "section_id" in m]
+
+
+def _looks_aviation_query(query: str) -> bool:
+    normalized = " ".join(query.lower().split())
+    return any(term in normalized for term in AVIATION_QUERY_TERMS)
 
 
 def _section_to_ref(score: float, sec: dict) -> ReferenceItem:
