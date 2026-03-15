@@ -133,7 +133,7 @@ class CanonicalStore:
             rows = session.scalars(
                 select(RegulationSection)
                 .where(func.lower(RegulationSection.citation).like(pattern))
-                .order_by(RegulationSection.citation)
+                .order_by(RegulationSection.citation, RegulationSection.title)
                 .limit(limit)
             ).all()
         return [self._row_to_dict(row) for row in rows]

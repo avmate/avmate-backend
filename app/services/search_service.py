@@ -395,7 +395,7 @@ def _collect_prefix_candidates(
     candidates: list[tuple[float, dict]] = []
     for index, citation in enumerate(citations):
         score = max(0.995, 1.0 - (index * 0.001))
-        matches = canonical_store.get_sections_by_citation_prefix(citation)
+        matches = canonical_store.get_sections_by_citation_prefix(citation, limit=200)
         matches.sort(key=lambda sec: _candidate_query_overlap(sec, query_text), reverse=True)
         for sec in matches:
             if _is_candidate_family_consistent(sec) and sec["section_id"] not in seen_ids:
