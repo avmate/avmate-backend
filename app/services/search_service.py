@@ -101,6 +101,17 @@ AVIATION_QUERY_TERMS = {
     "vmc",
     "weather",
 }
+AVIATION_QUERY_PATTERN = re.compile(
+    r"\b("
+    r"part\s+\d+[a-z]?"
+    r"|ppl|cpl|atpl|rpl"
+    r"|aoc|damp|tcas|gpws|tem|sms|nts|kdr"
+    r"|multicrew|multi-crew|endorsement|examiner"
+    r"|point of no return|pnr|pressure height|density height"
+    r"|1-in-60|stopway|balanced field|microburst"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 class SearchService:
@@ -823,7 +834,7 @@ def _extract_section_ids(raw: dict) -> list[str]:
 
 def _looks_aviation_query(query: str) -> bool:
     normalized = " ".join(query.lower().split())
-    return any(term in normalized for term in AVIATION_QUERY_TERMS)
+    return bool(AVIATION_QUERY_PATTERN.search(normalized)) or any(term in normalized for term in AVIATION_QUERY_TERMS)
 
 
 def _section_to_ref(score: float, sec: dict) -> ReferenceItem:

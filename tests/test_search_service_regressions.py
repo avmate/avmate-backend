@@ -4,7 +4,7 @@ import unittest
 from dataclasses import dataclass
 from typing import Any
 
-from app.services.search_service import SearchService, _route_known_query
+from app.services.search_service import SearchService, _looks_aviation_query, _route_known_query
 
 
 
@@ -886,6 +886,9 @@ class SearchServiceRegressionTests(unittest.TestCase):
 
         self.assertEqual(response.references, [])
         self.assertEqual(response.confidence, 0)
+
+    def test_looks_aviation_query_accepts_part_and_licence_terms(self) -> None:
+        self.assertTrue(_looks_aviation_query("What are your privileges and limitations under a Part 61 PPL?"))
 
 
 if __name__ == "__main__":
