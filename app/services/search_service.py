@@ -163,6 +163,7 @@ class SearchService:
                     self._canonical_store,
                     query_route["preferred_citations"],
                     seen_ids,
+                    query,
                 )
             )
 
@@ -307,6 +308,7 @@ class SearchService:
 
         # 10. Rank, deduplicate, take top_k
         candidates.sort(key=lambda x: x[0], reverse=True)
+        candidates = _dedupe_candidates_by_citation(candidates)
         references = [_section_to_ref(score, sec) for score, sec in candidates[:top_k]]
 
         if not references:
@@ -387,12 +389,15 @@ def _collect_prefix_candidates(
     canonical_store: CanonicalStore,
     citations: list[str],
     seen_ids: set[str],
+    query_text: str,
 ) -> list[tuple[float, dict]]:
     """Collect deterministic citation-prefix matches for known query intents."""
     candidates: list[tuple[float, dict]] = []
     for index, citation in enumerate(citations):
         score = max(0.995, 1.0 - (index * 0.001))
-        for sec in canonical_store.get_sections_by_citation_prefix(citation):
+        matches = canonical_store.get_sections_by_citation_prefix(citation)
+        matches.sort(key=lambda sec: _candidate_query_overlap(sec, query_text), reverse=True)
+        for sec in matches:
             if _is_candidate_family_consistent(sec) and sec["section_id"] not in seen_ids:
                 candidates.append((score, sec))
                 seen_ids.add(sec["section_id"])
@@ -926,6 +931,39 @@ def _rerank_by_citation(
                 break
         result.append((max(0.0, min(1.0, score + adjustment)), sec))
     return result
+
+
+def _candidate_query_overlap(section: dict, query_text: str) -> tuple[int, int, int]:
+    normalized_query = re.sub(r"[^a-z0-9 ]+", " ", query_text.lower())
+    query_tokens = {
+        token
+        for token in normalized_query.split()
+        if len(token) >= 3 and token not in {"what", "when", "with", "that", "this", "from"}
+    }
+    title = str(section.get("title", "")).lower()
+    haystack = " ".join(
+        (
+            title,
+            str(section.get("text", "")).lower(),
+            str(section.get("citation", "")).lower(),
+        )
+    )
+    overlap = sum(1 for token in query_tokens if token in haystack)
+    title_hits = sum(1 for token in query_tokens if token in title)
+    return (overlap, title_hits, -len(title))
+
+
+def _dedupe_candidates_by_citation(candidates: list[tuple[float, dict]]) -> list[tuple[float, dict]]:
+    deduped: list[tuple[float, dict]] = []
+    seen: set[str] = set()
+    for score, sec in candidates:
+        citation = " ".join(str(sec.get("citation", "")).split())
+        key = citation.lower() if citation else str(sec.get("section_id", ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append((score, sec))
+    return deduped
 
 
 def _extract_chapter_prefix(citation: str) -> str:

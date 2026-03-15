@@ -667,7 +667,37 @@ class SearchServiceRegressionTests(unittest.TestCase):
         response = service.search("What is an aerodrome reference point?", top_k=5)
 
         self.assertEqual(response.references[0].title, "AIP GEN 2.2 1 Aerodrome Reference Point (ARP)")
+        self.assertEqual(len(response.references), 1)
         self.assertEqual(response.citations, ["AIP GEN 2.2 1"])
+
+    def test_search_prefers_best_matching_shared_citation_entry_for_aip_definition_query(self) -> None:
+        generic = _section(
+            "sec-generic",
+            "AIP GEN 2.2 1",
+            text="1. DEFINITIONS Active LAHSO Runway: The runway used during LAHSO for arriving aircraft.",
+            title="AIP GEN 2.2 1",
+            regulation_type="AIP",
+        )
+        specific = _section(
+            "sec-specific",
+            "AIP GEN 2.2 1",
+            text="Aerodrome Elevation: The elevation of the highest point of the landing area.",
+            title="AIP GEN 2.2 1 Aerodrome Elevation",
+            regulation_type="AIP",
+        )
+        service = SearchService(
+            embeddings=_FakeEmbeddings(),
+            vector_store=_FakeVectorStore([{"metadatas": [[]], "distances": [[]]}]),
+            canonical_store=_FakeCanonicalStore(
+                sections=[generic, specific],
+                exact_prefix_map={"AIP GEN 2.2 1": ["sec-generic", "sec-specific"]},
+            ),
+        )
+
+        response = service.search("What is the definition of Aerodrome Elevation in the AIP?", top_k=5)
+
+        self.assertEqual(response.references[0].title, "AIP GEN 2.2 1 Aerodrome Elevation")
+        self.assertEqual(len(response.references), 1)
 
     def test_search_treats_casr_part_specific_section_as_exact_citation(self) -> None:
         exact = _section(
