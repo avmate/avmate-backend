@@ -871,6 +871,22 @@ class SearchServiceRegressionTests(unittest.TestCase):
         self.assertEqual(response.references, [])
         self.assertEqual(response.confidence, 0)
 
+    def test_search_returns_empty_for_car_tire_query(self) -> None:
+        service = SearchService(
+            embeddings=_FakeEmbeddings(),
+            vector_store=_FakeVectorStore(
+                [{"metadatas": [[{"section_id": "sec-noise"}]], "distances": [[0.01]]}]
+            ),
+            canonical_store=_FakeCanonicalStore(
+                sections=[_section("sec-noise", "CAR 42T", text="All changes must be approved.", regulation_type="CAR")]
+            ),
+        )
+
+        response = service.search("How do I change a car tire?", top_k=3)
+
+        self.assertEqual(response.references, [])
+        self.assertEqual(response.confidence, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
