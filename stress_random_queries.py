@@ -37,7 +37,7 @@ REPORT_PATH = Path(os.getenv("AVMATE_RANDOM_QUERY_REPORT", "stress_random_querie
 MIN_QUERIES_PER_MANUAL = int(os.getenv("AVMATE_MIN_QUERIES_PER_MANUAL", "1"))
 QUERY_BANK_PATHS = os.getenv(
     "AVMATE_QUERY_BANK_PATHS",
-    "data/query_coverage_bank.csv,data/query_coverage_bank_law.csv",
+    "data/query_coverage_bank.csv,data/query_coverage_bank_law.csv,data/query_coverage_bank_real_user.csv",
 )
 
 NON_AIP_CITATION_PATTERN = re.compile(
