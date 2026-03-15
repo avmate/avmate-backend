@@ -906,12 +906,26 @@ class SearchServiceRegressionTests(unittest.TestCase):
         self.assertEqual(route["regulation_hint"], "MOS")
         self.assertEqual(route["preferred_citations"], ["MOS 19.02"])
 
+    def test_known_route_matches_fixed_wing_day_night_fuel_query(self) -> None:
+        route = _route_known_query("Explain the VFR fuel requirements for a fixed-wing aircraft (Day/Night).")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "MOS")
+        self.assertEqual(route["preferred_citations"], ["MOS 19.02", "MOS 19.04"])
+
     def test_known_route_matches_simple_speed_limit_query(self) -> None:
         route = _route_known_query("Speed limit below 10,000 ft")
 
         self.assertIsNotNone(route)
         self.assertEqual(route["regulation_hint"], "AIP")
         self.assertEqual(route["preferred_citations"], ["AIP ENR 1.4 4.1"])
+
+    def test_known_route_routes_class_c_vmc_query(self) -> None:
+        route = _route_known_query("What are the VFR cloud clearance requirements in Class C airspace?")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "AIP")
+        self.assertEqual(route["preferred_citations"], ["AIP ENR 1.2 2.1", "MOS 2.07"])
 
     def test_known_route_routes_instrument_approach_competency_to_mos(self) -> None:
         route = _route_known_query("What are the CPL instrument approach competency standards?")
@@ -947,6 +961,20 @@ class SearchServiceRegressionTests(unittest.TestCase):
         self.assertIsNotNone(route)
         self.assertEqual(route["regulation_hint"], "CASR")
         self.assertEqual(route["preferred_citations"], ["CASR 61.970", "CASR 61.965", "CASR 61.980"])
+
+    def test_known_route_routes_alcohol_restrictions_query(self) -> None:
+        route = _route_known_query("What are the alcohol restrictions for flight crew in Australia?")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "CASR")
+        self.assertEqual(route["preferred_citations"], ["CASR 91.520", "CASR 91.785"])
+
+    def test_known_route_routes_documents_carried_query(self) -> None:
+        route = _route_known_query("What documents must be carried on board for a local VFR flight?")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "CASR")
+        self.assertEqual(route["preferred_citations"], ["CASR 91.105"])
 
     def test_known_route_routes_foundational_general_operating_rules_query(self) -> None:
         route = _route_known_query("Which document contains the foundational general operating rules for all Australian pilots?")
@@ -1000,12 +1028,26 @@ class SearchServiceRegressionTests(unittest.TestCase):
         self.assertEqual(route["regulation_hint"], "CASR")
         self.assertEqual(route["preferred_citations"], ["CASR 202.170", "CASR 202.171", "CASR 202.172"])
 
+    def test_known_route_routes_airworthy_query(self) -> None:
+        route = _route_known_query("How do you determine if an aircraft is Airworthy under Australian regs?")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "CASR")
+        self.assertEqual(route["preferred_citations"], ["CASR 42.155", "CASR 42.500", "CASR 42.575"])
+
     def test_known_route_routes_head_of_operations_query(self) -> None:
         route = _route_known_query("What is the role of the Head of Operations in a flying school?")
 
         self.assertIsNotNone(route)
         self.assertEqual(route["regulation_hint"], "CASR")
         self.assertEqual(route["preferred_citations"], ["CASR 141.020", "CASR 141.030", "CASR 141.045"])
+
+    def test_known_route_routes_ppl_privileges_query(self) -> None:
+        route = _route_known_query("What are your privileges and limitations under a Part 61 PPL?")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["regulation_hint"], "CASR")
+        self.assertEqual(route["preferred_citations"], ["CASR 61.505", "CASR 61.510", "CASR 61.410"])
 
     def test_known_route_routes_kdr_query(self) -> None:
         route = _route_known_query("What are the Knowledge Deficiency Reports (KDRs)?")

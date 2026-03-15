@@ -448,6 +448,7 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
         "fuel" in normalized
         and "vfr" in normalized
         and "day" in normalized
+        and not any(term in normalized for term in ("day/night", "day and night"))
         and any(
             term in normalized
             for term in (
@@ -474,6 +475,21 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
 
     if (
         "fuel" in normalized
+        and "vfr" in normalized
+        and any(term in normalized for term in ("fixed-wing", "fixed wing", "aeroplane", "airplane"))
+        and any(term in normalized for term in ("day/night", "day and night", "night"))
+    ):
+        return {
+            "regulation_hint": "MOS",
+            "search_text": (
+                "MOS 19.02 fixed wing VFR day fuel requirements final reserve fuel "
+                "MOS 19.04 fixed wing VFR night fuel requirements alternate final reserve"
+            ),
+            "preferred_citations": ["MOS 19.02", "MOS 19.04"],
+        }
+
+    if (
+        "fuel" in normalized
         and any(term in normalized for term in ("part 91", "small aeroplane", "small airplane", "fixed-wing", "fixed wing"))
     ):
         return {
@@ -496,6 +512,19 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
                 "in sight of ground or water CASR 91.280"
             ),
             "preferred_citations": ["MOS 2.07", "CASR 91.280"],
+        }
+
+    if (
+        "class c" in normalized
+        and any(term in normalized for term in ("visibility", "cloud clearance", "clear of cloud", "vmc"))
+    ):
+        return {
+            "regulation_hint": "AIP",
+            "search_text": (
+                "AIP ENR 1.2 2.1 cloud and visibility criteria for VMC class C "
+                "Part 91 MOS section 2.07"
+            ),
+            "preferred_citations": ["AIP ENR 1.2 2.1", "MOS 2.07"],
         }
 
     if (
@@ -556,6 +585,19 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
             "preferred_citations": ["CAR 43", "CAR 47"],
         }
 
+    if (
+        "airworthy" in normalized
+        and any(term in normalized for term in ("aircraft", "australian regs", "regulations", "determine", "under"))
+    ):
+        return {
+            "regulation_hint": "CASR",
+            "search_text": (
+                "CASR 42.155 aircraft airworthy condition responsibility "
+                "CASR 42.500 maintenance requirements CASR 42.575 unairworthy defects"
+            ),
+            "preferred_citations": ["CASR 42.155", "CASR 42.500", "CASR 42.575"],
+        }
+
     if "airworthiness directive" in normalized or re.search(r"\bad\b", normalized):
         if any(term in normalized for term in ("purpose", "what is", "meaning", "requirements", "directive")):
             return {
@@ -578,6 +620,20 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
                 "passengers compensation hire limitations"
             ),
             "preferred_citations": ["CASR 61.505"],
+        }
+
+    if (
+        any(term in normalized for term in ("private pilot licence", "private pilot license", "part 61 ppl", "ppl"))
+        and any(term in normalized for term in ("privileges", "limitations", "privileges and limitations"))
+    ):
+        return {
+            "regulation_hint": "CASR",
+            "search_text": (
+                "CASR 61.505 privileges of private pilot licences "
+                "CASR 61.510 limitations on exercise of privileges of private pilot licences "
+                "CASR 61.410 limitations medical certificates private pilot licence holders"
+            ),
+            "preferred_citations": ["CASR 61.505", "CASR 61.510", "CASR 61.410"],
         }
 
     if (
@@ -632,6 +688,19 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
         }
 
     if (
+        any(term in normalized for term in ("alcohol", "fit for duty"))
+        and any(term in normalized for term in ("flight crew", "crew", "pilot"))
+    ):
+        return {
+            "regulation_hint": "CASR",
+            "search_text": (
+                "CASR 91.520 crew members to be fit for duty alcohol restrictions "
+                "CASR 91.785 crew provision of alcohol"
+            ),
+            "preferred_citations": ["CASR 91.520", "CASR 91.785"],
+        }
+
+    if (
         "night vfr" in normalized
         and any(term in normalized for term in ("rules", "operations", "requirements", "conduct"))
     ):
@@ -642,6 +711,16 @@ def _route_known_query(query: str) -> dict[str, Any] | None:
                 "CASR 61.965 recent experience night VFR CASR 61.980 night VFR endorsement"
             ),
             "preferred_citations": ["CASR 61.970", "CASR 61.965", "CASR 61.980"],
+        }
+
+    if (
+        any(term in normalized for term in ("documents", "carried on board", "carry on board"))
+        and any(term in normalized for term in ("local vfr", "vfr flight", "local flight"))
+    ):
+        return {
+            "regulation_hint": "CASR",
+            "search_text": "CASR 91.105 carriage of documents local VFR flight required documents on board",
+            "preferred_citations": ["CASR 91.105"],
         }
 
     if (
