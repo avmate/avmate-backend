@@ -789,6 +789,41 @@ class SearchServiceRegressionTests(unittest.TestCase):
         self.assertEqual(response.references[0].citation, "CASR 61.005")
         self.assertTrue(all(ref.citation.startswith("CASR 61.") for ref in response.references))
 
+    def test_search_prefers_known_route_over_broad_part_citation_when_intent_is_specific(self) -> None:
+        mos = _section(
+            "sec-mos1902",
+            "MOS 19.02",
+            text="Fuel requirements for VFR flight by day for a small aeroplane.",
+            regulation_type="MOS",
+        )
+        casr = _section(
+            "sec-casr91005",
+            "CASR 91.005",
+            text="Application of Part 91.",
+            regulation_type="CASR",
+        )
+        service = SearchService(
+            embeddings=_FakeEmbeddings(),
+            vector_store=_FakeVectorStore(
+                [{"metadatas": [[{"section_id": "sec-casr91005"}]], "distances": [[0.01]]}]
+            ),
+            canonical_store=_FakeCanonicalStore(
+                sections=[mos, casr],
+                exact_prefix_map={
+                    "MOS 19.02": ["sec-mos1902"],
+                    "CASR 91.": ["sec-casr91005"],
+                },
+                exact_tree_map={"MOS 19.02": ["sec-mos1902"]},
+            ),
+        )
+
+        response = service.search(
+            "Under CASR Part 91, what are the fuel requirements for a small aeroplane (fixed-wing)?",
+            top_k=3,
+        )
+
+        self.assertEqual(response.references[0].citation, "MOS 19.02")
+
     def test_known_route_matches_broader_day_vfr_fuel_phrasing(self) -> None:
         route = _route_known_query("How much fuel must I carry for a VFR day flight?")
 

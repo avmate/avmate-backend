@@ -138,7 +138,10 @@ class SearchService:
         # 1. Extract any explicit citations written in the query (e.g. "CASR 135.175")
         explicit_citations = [_normalize_structured_citation(c) for c in extract_citations(query)]
         explicit_families = {_detect_family(c) for c in explicit_citations} - {None}
-        query_route = _route_explicit_citation_query(query, explicit_citations) if explicit_citations else _route_known_query(query)
+        has_specific_explicit_citation = any(_is_specific_citation(citation) for citation in explicit_citations)
+        query_route = _route_known_query(query) if not has_specific_explicit_citation else None
+        if not query_route and explicit_citations:
+            query_route = _route_explicit_citation_query(query, explicit_citations)
         if not explicit_citations and not query_route and not _looks_aviation_query(query):
             return _empty_response(request_id)
 
@@ -388,7 +391,7 @@ def _collect_prefix_candidates(
     """Collect deterministic citation-prefix matches for known query intents."""
     candidates: list[tuple[float, dict]] = []
     for index, citation in enumerate(citations):
-        score = max(0.95, 0.99 - (index * 0.01))
+        score = max(0.995, 1.0 - (index * 0.001))
         for sec in canonical_store.get_sections_by_citation_prefix(citation):
             if _is_candidate_family_consistent(sec) and sec["section_id"] not in seen_ids:
                 candidates.append((score, sec))
