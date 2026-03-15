@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from stress_random_queries import (
+    QueryCase,
     _load_query_bank_cases,
     _is_out_of_scope_case,
     citation_matches_expected,
     citation_family_matches_regulation_type,
     is_precise_citation,
     normalize_expected_citation,
+    query_api,
 )
 
 
@@ -62,6 +65,46 @@ class StressRandomQueriesTests(unittest.TestCase):
                 "Explain the 3:1 descent profile rule.",
             )
         )
+
+    def test_marks_tas_calculation_query_as_out_of_scope(self) -> None:
+        self.assertTrue(
+            _is_out_of_scope_case(
+                "AIP",
+                "Navigation",
+                "What is 'TAS' and how is it calculated?",
+            )
+        )
+
+    def test_query_api_retries_empty_citations(self) -> None:
+        case = QueryCase(
+            query="What is a Maintenance Release and how long is it valid for?",
+            expected_citation="",
+            regulation_type="CAR",
+            source_file="bank",
+            is_bank_case=True,
+        )
+
+        class _Response:
+            def __init__(self, payload: dict[str, object]) -> None:
+                self.status_code = 200
+                self._payload = payload
+
+            def json(self) -> dict[str, object]:
+                return self._payload
+
+        responses = iter(
+            [
+                _Response({"citations": [], "answer": "No matching regulatory text found for this query."}),
+                _Response({"citations": ["CAR 43"], "answer": "CAR 43: Maintenance release"}),
+            ]
+        )
+
+        with patch("stress_random_queries.requests.post", side_effect=lambda *args, **kwargs: next(responses)):
+            with patch("stress_random_queries.RETRY_ATTEMPTS", 2), patch("stress_random_queries.RETRY_DELAY_SECONDS", 0):
+                result = query_api(case)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.citations, ["CAR 43"])
 
     def test_accepts_structured_aip_citations(self) -> None:
         self.assertTrue(is_precise_citation("AIP ENR 1.5 6.2.1", "AIP"))

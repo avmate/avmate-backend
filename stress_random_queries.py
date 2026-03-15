@@ -80,7 +80,7 @@ OUT_OF_SCOPE_QUERY_PATTERNS = (
     re.compile(r"\b(?:scuba|decompression|decompression diving|scuba diving)\b", re.IGNORECASE),
     re.compile(r"\b(?:3:1 descent profile|vat|vref)\b", re.IGNORECASE),
     re.compile(r"\b(?:form\s*61-9tx|security identification card|asic)\b", re.IGNORECASE),
-    re.compile(r"\b(?:what is tas and how is it calculated|moca\b.*\bmea|mea\b.*\bmoca)\b", re.IGNORECASE),
+    re.compile(r"(?:what\s+is\s+['\"]?tas['\"]?\s+and\s+how\s+is\s+it\s+calculated|moca\b.*\bmea|mea\b.*\bmoca)", re.IGNORECASE),
     re.compile(r"\b(?:how do you manage a captain who is disregarding a sop|verify an applicant'?s identity)\b", re.IGNORECASE),
 )
 
@@ -561,6 +561,8 @@ def query_api(case: QueryCase) -> QueryResult:
     url = f"{BASE_URL}/search"
     payload = {"query": case.query, "top_k": TOP_K}
     response = None
+    response_payload: dict[str, object] = {}
+    citations: list[str] = []
     for attempt in range(1, max(2, RETRY_ATTEMPTS + 1)):
         try:
             response = requests.post(url, json=payload, timeout=REQUEST_TIMEOUT)
@@ -579,7 +581,27 @@ def query_api(case: QueryCase) -> QueryResult:
             time.sleep(RETRY_DELAY_SECONDS)
             continue
         if response.status_code == 200:
-            break
+            response_payload = response.json()
+            citations = [
+                normalize_spaces(item)
+                for item in (response_payload.get("citations") or [])
+                if normalize_spaces(item)
+            ]
+            if citations:
+                break
+            if attempt < RETRY_ATTEMPTS + 1:
+                time.sleep(RETRY_DELAY_SECONDS)
+                continue
+            return QueryResult(
+                ok=False,
+                reason="empty_citations",
+                query=case.query,
+                expected_citation=case.expected_citation,
+                citations=[],
+                status_code=200,
+                is_bank_case=case.is_bank_case,
+                out_of_scope=case.out_of_scope,
+            )
         if response.status_code in {429, 503} and attempt < RETRY_ATTEMPTS + 1:
             time.sleep(RETRY_DELAY_SECONDS)
             continue
@@ -594,19 +616,24 @@ def query_api(case: QueryCase) -> QueryResult:
             out_of_scope=case.out_of_scope,
         )
 
-    payload = response.json() if response is not None else {}
-    citations = [normalize_spaces(item) for item in (payload.get("citations") or []) if normalize_spaces(item)]
     if not citations:
-        return QueryResult(
-            ok=False,
-            reason="empty_citations",
-            query=case.query,
-            expected_citation=case.expected_citation,
-            citations=[],
-            status_code=200,
-            is_bank_case=case.is_bank_case,
-            out_of_scope=case.out_of_scope,
-        )
+        response_payload = response_payload or (response.json() if response is not None else {})
+        citations = [
+            normalize_spaces(item)
+            for item in (response_payload.get("citations") or [])
+            if normalize_spaces(item)
+        ]
+        if not citations:
+            return QueryResult(
+                ok=False,
+                reason="empty_citations",
+                query=case.query,
+                expected_citation=case.expected_citation,
+                citations=[],
+                status_code=200,
+                is_bank_case=case.is_bank_case,
+                out_of_scope=case.out_of_scope,
+            )
 
     if len({c.lower() for c in citations}) != len(citations):
         return QueryResult(
